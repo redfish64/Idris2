@@ -183,9 +183,10 @@ caseBlock {vars} rigc elabinfo fc nest env scr scrtm scrty caseRig alts expected
          defs <- get Ctxt
          let vis = case !(lookupCtxtExact (Resolved (defining est)) (gamma defs)) of
                         Just gdef =>
-                             if visibility gdef == Public
-                                then Public
-                                else Private
+                             Public
+                             -- if visibility gdef == Public
+                             --    then Public
+                             --    else Private
                         Nothing => Public
 
          -- if the scrutinee is ones of the arguments in 'env' we should

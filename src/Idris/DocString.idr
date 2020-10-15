@@ -185,7 +185,7 @@ getContents ns
     visible defs n
         = do Just def <- lookupCtxtExact n (gamma defs)
                   | Nothing => pure False
-             pure (visibility def /= Private)
+             pure True --(visibility def /= Private)
 
     inNS : Name -> Bool
     inNS (NS xns (UN _)) = xns == ns

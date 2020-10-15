@@ -738,7 +738,8 @@ processDef opts nest env fc n_in cs_in
              do let rmetas = getMetas tree_ct
                 log "declare.def" 10 $ "Saving from " ++ show n ++ ": " ++ show (keys rmetas)
                 traverse_ addToSave (keys rmetas)
-         when (isUserName n && visibility gdef /= Private) $
+         -- when (isUserName n && visibility gdef /= Private) $
+         when (isUserName n) $
              do let tymetas = getMetas (type gdef)
                 traverse_ addToSave (keys tymetas)
          addToSave n

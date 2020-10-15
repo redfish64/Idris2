@@ -28,7 +28,7 @@ mkDataTy fc ((n, c, p, ty) :: ps)
 -- Projections are only visible if the record is public export
 projVis : Visibility -> Visibility
 projVis Public = Public
-projVis _ = Private
+-- projVis _ = Private
 
 elabRecord : {vars : _} ->
              {auto c : Ref Ctxt Defs} ->

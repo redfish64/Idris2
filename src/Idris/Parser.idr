@@ -750,13 +750,13 @@ mutual
 visOption : Rule Visibility
 visOption
     = (keyword "public" *> keyword "export" *> pure Public)
-  <|> (keyword "export" *> pure Export)
-  <|> (keyword "private" *> pure Private)
+  <|> (keyword "export" *> pure Public)
+  <|> (keyword "private" *> pure Public)
 
 visibility : SourceEmptyRule Visibility
 visibility
     = visOption
-  <|> pure Private
+  <|> pure Public
 
 tyDecl : String -> FileName -> IndentInfo -> Rule PTypeDecl
 tyDecl predoc fname indents
@@ -1133,7 +1133,7 @@ visOpt fname
 
 getVisibility : Maybe Visibility -> List (Either Visibility PFnOpt) ->
                SourceEmptyRule Visibility
-getVisibility Nothing [] = pure Private
+getVisibility Nothing [] = pure Public
 getVisibility (Just vis) [] = pure vis
 getVisibility Nothing (Left x :: xs) = getVisibility (Just x) xs
 getVisibility (Just vis) (Left x :: xs)

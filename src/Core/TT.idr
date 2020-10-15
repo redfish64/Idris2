@@ -662,40 +662,42 @@ interface Weaken (tm : List Name -> Type) where
   weaken = weakenNs (suc zero)
 
 public export
-data Visibility = Private | Export | Public
+data Visibility = 
+ -- Private | Export | 
+ Public
 
 export
 Show Visibility where
-  show Private = "private"
-  show Export = "export"
+  -- show Private = "private"
+  -- show Export = "export"
   show Public = "public export"
 
 export
 Pretty Visibility where
-  pretty Private = pretty "private"
-  pretty Export = pretty "export"
+  -- pretty Private = pretty "private"
+  -- pretty Export = pretty "export"
   pretty Public = pretty "public" <+> pretty "export"
 
 export
 Eq Visibility where
-  Private == Private = True
-  Export == Export = True
+  -- Private == Private = True
+  -- Export == Export = True
   Public == Public = True
   _ == _ = False
 
 export
 Ord Visibility where
-  compare Private Export = LT
-  compare Private Public = LT
-  compare Export Public = LT
+  -- compare Private Export = LT
+  -- compare Private Public = LT
+  -- compare Export Public = LT
 
-  compare Private Private = EQ
-  compare Export Export = EQ
+  -- compare Private Private = EQ
+  -- compare Export Export = EQ
   compare Public Public = EQ
 
-  compare Export Private = GT
-  compare Public Private = GT
-  compare Public Export = GT
+  -- compare Export Private = GT
+  -- compare Public Private = GT
+  -- compare Public Export = GT
 
 public export
 data TotalReq = Total | CoveringOnly | PartialOK

@@ -52,6 +52,8 @@ export SCHEME
 
 all: support ${TARGET} testbin libs
 
+all_but_tests: support ${TARGET} libs
+
 idris2-exec: ${TARGET}
 
 ${TARGET}: src/IdrisPaths.idr
@@ -141,6 +143,7 @@ install-libs:
 
 # Bootstrapping using SCHEME
 bootstrap: bootstrap-build bootstrap-test
+bootstrap_without_tests: bootstrap-build 
 
 bootstrap-build: support
 	cp support/c/${IDRIS2_SUPPORT} bootstrap/idris2_app

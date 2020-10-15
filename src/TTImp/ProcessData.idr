@@ -280,7 +280,7 @@ processData {vars} eopts nest env fc vis (MkImpLater dfc n_in ty_raw)
          log "declare.data" 10 $ "Saving from " ++ show n ++ ": " ++ show (keys (getMetas ty))
 
          case vis of
-              Private => pure ()
+              -- Private => pure ()
               _ => do addHashWithNames n
                       addHashWithNames fullty
 
@@ -324,13 +324,13 @@ processData {vars} eopts nest env fc vis (MkImpData dfc n_in ty_raw opts cons_ra
          tidx <- addDef n (newDef fc n linear vars fullty vis
                           (TCon 0 arity [] [] defaultFlags [] [] Nothing))
          case vis of
-              Private => pure ()
+              -- Private => pure ()
               _ => do addHashWithNames n
                       addHashWithNames fullty
 
          -- Constructors are private if the data type as a whole is
          -- export
-         let cvis = if vis == Export then Private else vis
+         let cvis = vis --if vis == Export then Private else vis
          cons <- traverse (checkCon eopts nest env cvis n_in (Resolved tidx)) cons_raw
 
          let ddef = MkData (MkCon dfc n arity fullty) cons

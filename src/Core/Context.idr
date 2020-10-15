@@ -1257,7 +1257,7 @@ lookupDefTyExact = lookupExactBy (\g => (definition g, type g))
 -- is the current namespace (or an outer one)
 -- that is: the namespace of 'n' is a parent of nspace
 visibleIn : Namespace -> Name -> Visibility -> Bool
-visibleIn nspace (NS ns n) Private = isParentOf ns nspace
+-- visibleIn nspace (NS ns n) Private = isParentOf ns nspace
 -- Public and Export names are always visible
 visibleIn nspace n _ = True
 
@@ -1265,9 +1265,10 @@ export
 visibleInAny : List Namespace -> Name -> Visibility -> Bool
 visibleInAny nss n vis = any (\ns => visibleIn ns n vis) nss
 
+--TIMHACK is reducibleIn what we're after? We want to enable reducing private and export things
 reducibleIn : Namespace -> Name -> Visibility -> Bool
-reducibleIn nspace (NS ns (UN n)) Export = isParentOf ns nspace
-reducibleIn nspace (NS ns (UN n)) Private = isParentOf ns nspace
+-- reducibleIn nspace (NS ns (UN n)) Export = isParentOf ns nspace
+-- reducibleIn nspace (NS ns (UN n)) Private = isParentOf ns nspace
 reducibleIn nspace n _ = True
 
 export
@@ -1806,7 +1807,8 @@ isAllPublic : {auto c : Ref Ctxt Defs} ->
               Core Bool
 isAllPublic
     = do defs <- get Ctxt
-         pure (allPublic (gamma defs))
+         -- pure (allPublic (gamma defs))
+         pure True -- FIXME TIMHACK TODO!!!!! Want to try out all public all the time
 
 -- Return True if the given namespace is visible in the context (meaning
 -- the namespace itself, and any namespace it's nested inside)

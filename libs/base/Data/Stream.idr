@@ -95,7 +95,7 @@ takeUntil : (n -> Bool) -> Stream n -> List n
 takeUntil p (x :: xs)
     = if p x
          then [x]
-         else x :: takeUntil p xs
+         else x :: Data.Stream.takeUntil p xs
 
 public export
 partial
@@ -103,7 +103,7 @@ takeBefore : (n -> Bool) -> Stream n -> List n
 takeBefore p (x :: xs)
     = if p x
          then []
-         else x :: takeBefore p xs
+         else x :: Data.Stream.takeBefore p xs
 
 export
 Applicative Stream where

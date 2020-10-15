@@ -72,14 +72,14 @@ visOption
          keyword "export"
          pure Public
   <|> do keyword "export"
-         pure Export
+         pure Public
   <|> do keyword "private"
-         pure Private
+         pure Public
 
 visibility : SourceEmptyRule Visibility
 visibility
     = visOption
-  <|> pure Private
+  <|> pure Public
 
 totalityOpt : Rule TotalReq
 totalityOpt
@@ -120,7 +120,7 @@ visOpt
 
 getVisibility : Maybe Visibility -> List (Either Visibility FnOpt) ->
                SourceEmptyRule Visibility
-getVisibility Nothing [] = pure Private
+getVisibility Nothing [] = pure Public
 getVisibility (Just vis) [] = pure vis
 getVisibility Nothing (Left x :: xs) = getVisibility (Just x) xs
 getVisibility (Just vis) (Left x :: xs)

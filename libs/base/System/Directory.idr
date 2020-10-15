@@ -9,7 +9,7 @@ DirPtr = AnyPtr
 support : String -> String
 support fn = "C:" ++ fn ++ ", libidris2_support"
 
-%foreign support "idris2_fileErrno"
+%foreign System.Directory.support "idris2_fileErrno"
          "node:support:fileErrno,support_system_directory"
 prim__fileErrno : PrimIO Int
 
@@ -27,28 +27,28 @@ returnError
 ok : HasIO io => a -> io (Either FileError a)
 ok x = pure (Right x)
 
-%foreign support "idris2_currentDirectory"
+%foreign System.Directory.support "idris2_currentDirectory"
          "node:lambda:()=>process.cwd()"
 prim__currentDir : PrimIO (Ptr String)
 
-%foreign support "idris2_changeDir"
+%foreign System.Directory.support "idris2_changeDir"
          "node:support:changeDir,support_system_directory"
 prim__changeDir : String -> PrimIO Int
 
-%foreign support "idris2_createDir"
+%foreign System.Directory.support "idris2_createDir"
          "node:support:createDir,support_system_directory"
 prim__createDir : String -> PrimIO Int
 
-%foreign support "idris2_openDir"
+%foreign System.Directory.support "idris2_openDir"
 prim__openDir : String -> PrimIO DirPtr
 
-%foreign support "idris2_closeDir"
+%foreign System.Directory.support "idris2_closeDir"
 prim__closeDir : DirPtr -> PrimIO ()
 
-%foreign support "idris2_removeDir"
+%foreign System.Directory.support "idris2_removeDir"
 prim__removeDir : String -> PrimIO ()
 
-%foreign support "idris2_nextDirEntry"
+%foreign System.Directory.support "idris2_nextDirEntry"
 prim__dirEntry : DirPtr -> PrimIO (Ptr String)
 
 export

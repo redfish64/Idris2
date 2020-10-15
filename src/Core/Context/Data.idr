@@ -117,7 +117,7 @@ addData vars vis tidx (MkData (MkCon dfc tyn arity tycon) datacons)
     allDet (S k) = [0..k]
 
     conVisibility : Visibility -> Visibility
-    conVisibility Export = Private
+    -- conVisibility Export = Private
     conVisibility x = x
 
     addDataConstructors : (tag : Int) -> List Constructor ->

@@ -422,14 +422,14 @@ export
 
 export
 TTC Visibility where
-  toBuf b Private = tag 0
-  toBuf b Export = tag 1
+  -- toBuf b Private = tag 0
+  -- toBuf b Export = tag 1
   toBuf b Public = tag 2
 
   fromBuf b
       = case !getTag of
-             0 => pure Private
-             1 => pure Export
+             -- 0 => pure Private
+             -- 1 => pure Export
              2 => pure Public
              _ => corrupt "Visibility"
 

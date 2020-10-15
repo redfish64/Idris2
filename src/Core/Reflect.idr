@@ -440,16 +440,16 @@ export
 Reify Visibility where
   reify defs val@(NDCon _ n _ _ _)
       = case !(full (gamma defs) n) of
-             NS _ (UN "Private") => pure Private
-             NS _ (UN "Export") => pure Export
+             -- NS _ (UN "Private") => pure Private
+             -- NS _ (UN "Export") => pure Export
              NS _ (UN "Public") => pure Public
              _ => cantReify val "Visibility"
   reify defs val = cantReify val "Visibility"
 
 export
 Reflect Visibility where
-  reflect fc defs lhs env Private = getCon fc defs (reflectiontt "Private")
-  reflect fc defs lhs env Export = getCon fc defs (reflectiontt "Export")
+  -- reflect fc defs lhs env Private = getCon fc defs (reflectiontt "Private")
+  -- reflect fc defs lhs env Export = getCon fc defs (reflectiontt "Export")
   reflect fc defs lhs env Public = getCon fc defs (reflectiontt "Public")
 
 export
