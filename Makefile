@@ -52,6 +52,8 @@ export SCHEME
 
 all: support ${TARGET} testbin libs
 
+all_but_tests: support ${TARGET} libs
+
 idris2-exec: ${TARGET}
 
 ${TARGET}: src/IdrisPaths.idr
@@ -87,11 +89,9 @@ test:
 
 support:
 	@${MAKE} -C support/c
-	@${MAKE} -C support/refc
 
 support-clean:
 	@${MAKE} -C support/c clean
-	@${MAKE} -C support/refc clean
 
 clean-libs:
 	${MAKE} -C libs/prelude clean
@@ -131,7 +131,6 @@ install-support:
 	install support/gambit/* ${PREFIX}/idris2-${IDRIS2_VERSION}/support/gambit
 	install support/js/* ${PREFIX}/idris2-${IDRIS2_VERSION}/support/js
 	@${MAKE} -C support/c install
-	@${MAKE} -C support/refc install
 
 install-libs:
 	${MAKE} -C libs/prelude install IDRIS2=../../${TARGET} IDRIS2_PATH=${IDRIS2_BOOT_PATH}
@@ -144,6 +143,7 @@ install-libs:
 
 # Bootstrapping using SCHEME
 bootstrap: bootstrap-build bootstrap-test
+bootstrap_without_tests: bootstrap-build 
 
 bootstrap-build: support
 	cp support/c/${IDRIS2_SUPPORT} bootstrap/idris2_app
