@@ -44,11 +44,11 @@ idrisTests = MkTestPool []
        "basic031", "basic032", "basic033", "basic034", "basic035",
        "basic036", "basic037", "basic038", "basic039", "basic040",
        "basic041", "basic042", "basic043", "basic044", "basic045",
-       "basic046", "basic047",
+       "basic046", "basic047", "basic048", "basic049",
        -- Coverage checking
        "coverage001", "coverage002", "coverage003", "coverage004",
        "coverage005", "coverage006", "coverage007", "coverage008",
-       "coverage009", "coverage010",
+       "coverage009", "coverage010", "coverage011",
        -- Documentation strings
        "docs001", "docs002",
        -- Evaluator
@@ -84,14 +84,14 @@ idrisTests = MkTestPool []
        "literate001", "literate002", "literate003", "literate004",
        "literate005", "literate006", "literate007", "literate008",
        "literate009", "literate010", "literate011", "literate012",
-       "literate013", "literate014",
+       "literate013", "literate014", "literate015", "literate016",
        -- Namespace blocks
        "namespace001",
        -- Parameters blocks
        "params001",
        -- Performance: things which have been slow in the past, or which
        -- pose interesting challenges for the elaborator
-       "perf001", "perf002", "perf003", "perf004", "perf005",
+       "perf001", "perf002", "perf003", "perf004", "perf005", "perf006",
        -- Parse errors
        "perror001", "perror002", "perror003", "perror004", "perror005",
        "perror006",
@@ -104,7 +104,7 @@ idrisTests = MkTestPool []
        "real001", "real002",
        -- Records, access and dependent update
        "record001", "record002", "record003", "record004", "record005",
-       "record007",
+       "record006",
        -- Quotation and reflection
        "reflection001", "reflection002", "reflection003", "reflection004",
        "reflection005", "reflection006", "reflection007", "reflection008",
@@ -137,6 +137,7 @@ chezTests = MkTestPool [Chez]
       "chez019", "chez020", "chez021", "chez022", "chez023", "chez024",
       "chez025", "chez026", "chez027", "chez028", "chez029", "chez030",
       "chez031",
+      "concurrency001",
       "perf001",
       "reg001"]
 
@@ -159,6 +160,10 @@ preludeTests : TestPool
 preludeTests = MkTestPool []
   [ "reg001" ]
 
+templateTests : TestPool
+templateTests = MkTestPool []
+  [ "simple-test", "ttimp", "with-ipkg" ]
+
 main : IO ()
 main = runner
   [ testPaths "ttimp" ttimpTests
@@ -168,6 +173,7 @@ main = runner
   , testPaths "prelude" preludeTests
   , testPaths "chez" chezTests
   , testPaths "node" nodeTests
+  , testPaths "templates" templateTests
   ] where
 
     testPaths : String -> TestPool -> TestPool

@@ -15,6 +15,8 @@ modules = Control.ANSI,
           Data.Bool.Algebra,
           Data.Bool.Decidable,
 
+          Data.Container,
+
           Data.Fin.Extra,
 
           Data.Fun.Extra,
@@ -96,6 +98,7 @@ modules = Control.ANSI,
           Text.PrettyPrint.Prettyprinter.Render.String,
           Text.PrettyPrint.Prettyprinter.Render.Terminal,
 
+          System.Future,
           System.Random,
           System.Path,
           Syntax.WithProof,
