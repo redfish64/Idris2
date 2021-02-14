@@ -51,6 +51,9 @@ import System.File
 import Network.Socket
 import Network.Socket.Data
 
+import Data.NameMap as N
+import Parser.Lexer.Package as PLP
+
 %default covering
 
 %foreign "C:fdopen,libc 6"
@@ -137,16 +140,90 @@ todoCmd : {auto o : Ref ROpts REPLOpts} ->
           String -> Core ()
 todoCmd cmdName = iputStrLn $ reflow $ cmdName ++ ": command not yet implemented. Hopefully soon!"
 
+resolveWhoCalls : {auto c : Ref Ctxt Defs} ->
+                          {auto m : Ref MD Metadata} ->
+                          Core (IOArray (List (Int,Int)))
+resolveWhoCalls =
+  do
+    md <- get MD
+    case (whoCalls md) of
+      Just wc => pure wc
+      Nothing =>
+        do
+          defs <- get Ctxt
+          wc <- buildWhoCalls  (gamma defs)
+          put MD (record { whoCalls = Just wc} md)
+          pure wc
+
+
 
 data IDEResult
   = REPL REPLResult
   | NameList (List Name)
+  | WhoCallsResult (List (Name,List (Name, Int)))
   | Term String   -- should be a PTerm + metadata, or SExp.
   | TTTerm String -- should be a TT Term + metadata, or perhaps SExp
   | NamesInFiles (List (Name, FC))
 
 replWrap : Core REPLResult -> Core IDEResult
 replWrap m = pure $ REPL !m
+
+lookupWhoCalls : Context -> IOArray (List (Int, Int)) -> Int -> Core (List (Name, Int))
+lookupWhoCalls ctx wc rnIdx =
+  do
+     Just callers <- coreLift $ readArray wc rnIdx
+       | Nothing => pure []
+
+     passThroughNonPrintableNames [] [] (filter ((/= rnIdx) . fst) callers)
+  where
+    --adds one list to the other, with duplicates being removed. Resulting items are not in any specific order
+    uniqueAddToList : Eq v => List v -> List v -> List v
+    uniqueAddToList [] x = x
+    uniqueAddToList x [] = x
+    uniqueAddToList (x :: xs) ys = case find (== x) ys of
+                                     Nothing => x :: uniqueAddToList xs ys
+                                     _ => uniqueAddToList xs ys
+    -- pass through names that we don't want to return, such as case or with blocks to
+    -- the name(s) that call them
+    passThroughNonPrintableNames : List Int -> List (Name, Int) -> List (Int, Int) -> Core (List (Name, Int))
+    passThroughNonPrintableNames pathHistory acc [] = pure acc
+    passThroughNonPrintableNames pathHistory acc workTodo@((idx,tc) :: xs) =
+      --don't go in loops (may happen if two non printable name are mutually referenced)
+      if (any (== idx) pathHistory) then (passThroughNonPrintableNames pathHistory acc xs)
+      else
+        do
+           rawN <- full ctx (Resolved idx)
+
+           --if surrounded by a NS, we want to decide how to process it based on the name inside the NS,
+           --but still report the outerName.
+           let (outerName, innerName) = case rawN of
+                                          NS _ inner  => (rawN,inner)
+                                          _ => (rawN,rawN)
+           --this is a routine to "pass through" the name. For names that aren't useful to the user, such as
+           --case blocks, we call this to find their callers, and flatten them out to be callers of the original
+           --name
+           let passThrough =
+                  do Just callers <- coreLift $ readArray wc idx
+                       --if there are none, we just return the name that was supposed to be passed through as is
+                       -- | Nothing => passThroughNonPrintableNames ((outerName,tc) :: acc) xs
+                       | Nothing => passThroughNonPrintableNames (idx :: pathHistory) acc xs
+                     passThroughNonPrintableNames (idx :: pathHistory) acc (filter ((/= idx) . fst) (uniqueAddToList callers xs))
+           case innerName of
+             CaseBlock _ _ => passThrough
+             WithBlock _ _ => passThrough
+             PV _ _ => passThrough
+             MN _ _ => passThrough
+             RF _ => passThrough
+             Nested _ _ => passThrough
+             _ => passThroughNonPrintableNames (idx :: pathHistory) ((outerName,tc) :: acc) xs
+
+convertStringToName : String -> Name
+convertStringToName v with (PLP.lex v)
+  convertStringToName v | Right [b,eoi] with (val b)
+    convertStringToName v | Right [b,eoi] | DotSepIdent (Just ns) n =  NS ns (UN n)
+    convertStringToName v | Right [b,eoi] | DotSepIdent Nothing n =  UN n
+    convertStringToName v | Right [b,eoi] | _ =  (UN v)
+  convertStringToName v | _ = (UN v)
 
 process : {auto c : Ref Ctxt Defs} ->
           {auto u : Ref UST UState} ->
@@ -161,12 +238,7 @@ process (LoadFile fname_in _)
                           Nothing => fname_in
                           Just f' => f'
          replWrap $ Idris.REPL.process (Load fname) >>= outputSyntaxHighlighting fname
-process (NameAt name Nothing)
-    = do defs <- get Ctxt
-         glob <- lookupCtxtName (UN name) (gamma defs)
-         let dat = map (\(name, _, gdef) => (name, gdef.location)) glob
-         pure (NamesInFiles dat)
-process (NameAt n (Just _))
+process (NameAt n _)
     = do todoCmd "name-at <name> <line> <column>"
          pure $ REPL $ Edited $ DisplayEdit emptyDoc
 process (TypeOf n Nothing)
@@ -203,9 +275,24 @@ process (Apropos n)
 process (Directive n)
     = do todoCmd "directive"
          pure $ REPL $ Printed emptyDoc
-process (WhoCalls n)
-    = do todoCmd "who-calls"
-         pure $ NameList []
+process (WhoCalls nameStr)
+    = do wc <- resolveWhoCalls
+         -- L.log "tim" 5 !(coreLift $ showIOArray wc)
+         defs <- get Ctxt
+         let ctx = gamma defs
+         let name = convertStringToName nameStr
+
+         ctxVals <- lookupCtxtName name ctx
+         let ctxNames : List Name
+             ctxNames = map fst ctxVals
+         ctxNamesToWCR <-
+            traverse (\n =>
+                         do
+                            (Resolved rnIdx) <- resolved ctx n
+                              | _ => pure (n,[])
+                            pure (n,!(lookupWhoCalls ctx wc rnIdx))
+                            ) ctxNames
+         pure $ WhoCallsResult ctxNamesToWCR
 process (CallsWho n)
     = do todoCmd "calls-who"
          pure $ NameList []
@@ -402,6 +489,16 @@ displayIDEResult outf i (NamesInFiles dat)
                    )
                    dat
                  )
+displayIDEResult outf i (WhoCallsResult dat)
+  = printIDEResult outf i
+     $ SExpList !(traverse
+                   (\(name, names)
+                     => pure $ SExpList [ StringAtom !(render $ pretty name)
+                                        , SExpList !(traverse (\(name, numCalls) => pure $ SExpList [StringAtom !(render $ pretty name), IntegerAtom $ cast numCalls]) names)
+                                        ]
+                   )
+                   dat
+                   )
 displayIDEResult outf i  _ = pure ()
 
 

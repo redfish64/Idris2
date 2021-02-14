@@ -2265,3 +2265,126 @@ recordWarning : {auto c : Ref Ctxt Defs} ->
 recordWarning w
     = do defs <- get Ctxt
          put Ctxt (record { warnings $= (w ::) } defs)
+
+interface ExtractNames a where
+
+  ||| extracts names from the object according to the specified filter
+  ||| and adds them to the front of "acc"
+  extractNames : a -> (acc : List Name) -> List Name
+
+mutual 
+  ExtractNames (PiInfo (Term vars)) where
+    extractNames (DefImplicit x) acc = extractNames x acc
+    extractNames _ acc = acc
+
+  ExtractNames (Binder (Term vars)) where
+    extractNames (Lam {type = Term vars} _ _ pi ty) acc = extractNames pi (extractNames ty acc)
+    extractNames (Let {type = Term vars} _ _ val ty) acc = extractNames val (extractNames ty acc)
+    extractNames (Pi {type = Term vars} _ _ pi ty) acc = extractNames pi (extractNames ty acc)
+    extractNames (PVar {type = Term vars} _ _ pi ty) acc = extractNames pi (extractNames ty acc)
+    extractNames (PLet {type = Term vars} _ _ val ty) acc = extractNames val (extractNames ty acc)
+    extractNames (PVTy {type = Term vars} _ _ ty) acc = extractNames ty acc
+
+  export
+  --Right now configuring it more as in, who references who, rather than who calls who. I think it's better to be loose with the definition and let the user figure it out
+  ExtractNames (Term a) where
+    extractNames (Local _ _ _ _) acc = acc --we don't try to handle local vars
+    -- This is primarily what we're looking for. It's a reference to a globally named variable
+    extractNames (Ref _ _ name) acc = name :: acc 
+    extractNames (Meta _ _ _ xs) acc = (foldr extractNames acc xs) 
+    extractNames (Bind _ _ b scope) acc = extractNames b (extractNames scope acc)
+    extractNames (App _ fn arg) acc = extractNames fn (extractNames arg acc)
+    extractNames (As _ _ as pat) acc = extractNames as (extractNames pat acc)
+    extractNames (TDelayed _ _ arg) acc = extractNames arg acc
+    extractNames (TDelay _ _ ty arg) acc = extractNames ty (extractNames arg acc)
+    extractNames (TForce _ _ arg) acc = extractNames arg acc
+    extractNames (PrimVal _ _) acc = acc
+    extractNames (Erased _ _) acc = acc
+    extractNames (TType _) acc = acc
+
+  ExtractNames (CaseAlt vars) where
+    extractNames (ConCase n t args sc) acc = extractNames sc (n :: acc)
+    extractNames (DelayCase ty arg sc) acc = extractNames sc acc
+    extractNames (ConstCase c sc) acc = extractNames sc acc
+    extractNames (DefaultCase sc) acc = extractNames sc acc
+
+  ExtractNames (CaseTree args) where  
+    extractNames (Case i v ty alts) acc = extractNames ty (foldr extractNames acc alts)
+    extractNames (STerm i tm) acc = extractNames tm acc
+    extractNames _ acc = acc
+
+  ExtractNames (Env Term v) where
+    extractNames [] acc = acc
+    extractNames (x :: xs) acc = (extractNames xs (extractNames x acc))
+
+  extractNamesForPats : (vs ** (Env Term vs, Term vs, Term vs)) -> List Name -> List Name
+  extractNamesForPats (_ ** (env, lhs, rhs)) acc = 
+    extractNames env (extractNames lhs (extractNames rhs acc))
+
+  ExtractNames Def where
+    extractNames None acc = acc
+    extractNames (PMDef pminfo args treeCT treeRT pats) acc = 
+      extractNames treeCT ( extractNames treeRT (foldr extractNamesForPats acc pats ))
+    extractNames (TCon tag arity parampos detpos flags mutwith datacons detagabbleBy) acc = mutwith ++ datacons ++ acc
+    extractNames (BySearch x maxdepth defining) acc = defining :: acc
+    extractNames (Guess guess envbind constraints) acc = extractNames guess acc
+    extractNames _ acc = acc
+
+  ExtractNames GlobalDef where
+    extractNames gd acc = extractNames (type gd) (extractNames (definition gd) acc)
+
+
+updateEntry : (v -> Bool) -> v -> (v -> v) -> List v -> List v
+updateEntry srcFn defVal updFn l = updateEntry1 l
+  where
+    updateEntry1 : List v -> List v
+    updateEntry1 [] = [defVal]
+    updateEntry1 (x :: xs) = 
+      case srcFn x of 
+        True => updFn x :: xs
+        False => x :: updateEntry1 xs
+
+
+buildWhoCalls1 : Context -> IOArray ContextEntry -> IOArray (List (Int,Int)) -> Core ()
+buildWhoCalls1 ctx ceArr wcArr = convertToWC 0
+  where
+    writeWCRel : Int -> Int -> IO ()
+    writeWCRel callee caller =
+      do
+        currWhoCalls <- map (maybe [] id) $ readArray wcArr callee
+        let updWhoCalls = updateEntry (\v => ((fst v) == caller)) (caller,1) (\v => (caller,snd v + 1)) currWhoCalls
+        writeArray wcArr callee updWhoCalls
+
+    nameToIndexFold : Name -> List Int -> List Int
+    nameToIndexFold (Resolved idx) l = idx :: l
+    nameToIndexFold _ l = l
+
+    convertToWC : Int -> Core ()
+    convertToWC index = 
+      if index >= max ceArr then pure ()
+      else
+        do
+          Just ce <- coreLift $ readArray ceArr index
+            | Nothing => convertToWC (index + 1) 
+          gd <- decode ctx index True ce >>= resolved ctx
+
+          names <- traverse (resolved ctx) (extractNames gd [])
+
+          let callsWho = foldr nameToIndexFold [] names
+
+          coreLift $ for_ callsWho $ (\callee => writeWCRel callee index)
+
+          convertToWC (index+1)
+
+export 
+buildWhoCalls : Context -> Core (IOArray (List (Int,Int)))
+buildWhoCalls ctx =
+  do
+    let a = content ctx
+    arr <- get Arr {ref=a}
+
+    wcArr <- coreLift $ newArray (max arr)
+
+    nameWCMap <- buildWhoCalls1 ctx arr wcArr
+
+    pure wcArr

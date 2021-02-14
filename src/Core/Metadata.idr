@@ -40,9 +40,12 @@ record Metadata where
        -- to know what the recursive call is, if applicable)
        currentLHS : Maybe ClosedTerm
        holeLHS : List (Name, ClosedTerm)
+       -- this is a map of who calls each name in Context.content and the number of times it was 
+       -- referenced. It's Nothing if it hasn't been calculated yet
+       whoCalls : Maybe (IOArray (List (Int,Int)))
 
 Show Metadata where
-  show (MkMetadata apps names tydecls currentLHS holeLHS)
+  show (MkMetadata apps names tydecls currentLHS holeLHS whoCalls)
     = "Metadata:\n" ++
       " lhsApps: " ++ show apps ++ "\n" ++
       " names: " ++ show names ++ "\n" ++
@@ -52,7 +55,7 @@ Show Metadata where
 
 export
 initMetadata : Metadata
-initMetadata = MkMetadata [] [] [] Nothing []
+initMetadata = MkMetadata [] [] [] Nothing [] Nothing
 
 -- A label for metadata in the global state
 export
@@ -70,7 +73,7 @@ TTC Metadata where
            ns <- fromBuf b
            tys <- fromBuf b
            hlhs <- fromBuf b
-           pure (MkMetadata apps ns tys Nothing hlhs)
+           pure (MkMetadata apps ns tys Nothing hlhs Nothing) --not saving whocalls since it's a lot of data which would be repeated for each TTM file
 
 export
 addLHS : {vars : _} ->
@@ -226,12 +229,13 @@ TTC TTMFile where
            pure (MkTTMFile ver md)
 
 HasNames Metadata where
-  full gam (MkMetadata lhs ns tys clhs hlhs)
+  full gam (MkMetadata lhs ns tys clhs hlhs wc)
       = pure $ MkMetadata !(traverse fullLHS lhs)
                           !(traverse fullTy ns)
                           !(traverse fullTy tys)
                           Nothing
                           !(traverse fullHLHS hlhs)
+                          Nothing
     where
       fullLHS : (FC, (Nat, ClosedTerm)) -> Core (FC, (Nat, ClosedTerm))
       fullLHS (fc, (i, tm)) = pure (fc, (i, !(full gam tm)))
@@ -242,12 +246,13 @@ HasNames Metadata where
       fullHLHS : (Name, ClosedTerm) -> Core (Name, ClosedTerm)
       fullHLHS (n, tm) = pure (!(full gam n), !(full gam tm))
 
-  resolved gam (MkMetadata lhs ns tys clhs hlhs)
+  resolved gam (MkMetadata lhs ns tys clhs hlhs _)
       = pure $ MkMetadata !(traverse resolvedLHS lhs)
                           !(traverse resolvedTy ns)
                           !(traverse resolvedTy tys)
                           Nothing
                           !(traverse resolvedHLHS hlhs)
+                          Nothing
     where
       resolvedLHS : (FC, (Nat, ClosedTerm)) -> Core (FC, (Nat, ClosedTerm))
       resolvedLHS (fc, (i, tm)) = pure (fc, (i, !(resolved gam tm)))
