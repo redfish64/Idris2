@@ -105,6 +105,12 @@ public export
 ignore : Functor f => f a -> f ()
 ignore = map (const ())
 
+namespace Functor
+  ||| Composition of functors is a functor.
+  export
+  [Compose] (Functor f, Functor g) => Functor (f . g) where
+    map fun = map (map fun)
+
 ||| Bifunctors
 ||| @f The action of the Bifunctor on pairs of objects
 public export
@@ -157,6 +163,15 @@ a *> b = map (const id) a <*> b
 %allow_overloads (<*)
 %allow_overloads (*>)
 
+namespace Applicative
+  ||| Composition of applicative functors is an applicative functor.
+  export
+  [Compose] (Applicative f, Applicative g) => Applicative (f . g)
+    using Functor.Compose where
+      pure = pure . pure
+
+      fun <*> x = ((<*>) <$> fun <*> x)
+
 public export
 interface Applicative f => Alternative f where
   empty : f a
@@ -176,9 +191,25 @@ interface Applicative m => Monad m where
 
 %allow_overloads (>>=)
 
+||| Right-to-left monadic bind, flipped version of `>>=`.
+public export
+(=<<) : Monad m => (a -> m b) -> m a -> m b
+(=<<) = flip (>>=)
+
+||| Sequencing of effectful composition
 public export
 (>>) : (Monad m) => m a -> m b -> m b
 a >> b = a >>= \_ => b
+
+||| Left-to-right Kleisli composition of monads.
+public export
+(>=>) : Monad m => (a -> m b) -> (b -> m c) -> (a -> m c)
+(>=>) f g = \x => f x >>= g
+
+||| Right-to-left Kleisli composition of monads, flipped version of `>=>`.
+public export
+(<=<) : Monad m => (b -> m c) -> (a -> m b) -> (a -> m c)
+(<=<) = flip (>=>)
 
 ||| `guard a` is `pure ()` if `a` is `True` and `empty` if `a` is `False`.
 public export
@@ -200,7 +231,7 @@ when False f = pure ()
 ||| function, into a single result.
 ||| @ t The type of the 'Foldable' parameterised type.
 public export
-interface Foldable (t : Type -> Type) where
+interface Foldable t where
   ||| Successively combine the elements in a parameterised type using the
   ||| provided function, starting with the element that is in the final position
   ||| i.e. the right-most position.
@@ -217,11 +248,21 @@ interface Foldable (t : Type -> Type) where
   foldl : (func : acc -> elem -> acc) -> (init : acc) -> (input : t elem) -> acc
   foldl f z t = foldr (flip (.) . flip f) id t z
 
+  ||| Test whether the structure is empty.
+  ||| @ acc The accumulator value which is specified to be lazy
+  null : t elem -> Lazy Bool
+  null = foldr {acc = Lazy Bool} (\ _,_ => False) True
+
 ||| Similar to `foldl`, but uses a function wrapping its result in a `Monad`.
 ||| Consequently, the final value is wrapped in the same `Monad`.
 public export
 foldlM : (Foldable t, Monad m) => (funcM: a -> b -> m a) -> (init: a) -> (input: t b) -> m a
 foldlM fm a0 = foldl (\ma,b => ma >>= flip fm b) (pure a0)
+
+||| Maps each element to a value and combine them
+public export
+foldMap : (Foldable t, Monoid m) => (a -> m) -> t a -> m
+foldMap f = foldr ((<+>) . f) neutral
 
 ||| Combine each element of a structure into a monoid.
 public export
@@ -328,7 +369,7 @@ choiceMap : (Foldable t, Alternative f) => (a -> f b) -> t a -> f b
 choiceMap f = foldr (\e, a => f e <|> a) empty
 
 public export
-interface (Functor t, Foldable t) => Traversable (t : Type -> Type) where
+interface (Functor t, Foldable t) => Traversable t where
   ||| Map each element of a structure to a computation, evaluate those
   ||| computations and combine the results.
   traverse : Applicative f => (a -> f b) -> t a -> f (t b)
@@ -342,4 +383,3 @@ sequence = traverse id
 public export
 for : (Traversable t, Applicative f) => t a -> (a -> f b) -> f (t b)
 for = flip traverse
-

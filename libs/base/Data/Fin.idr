@@ -2,7 +2,7 @@ module Data.Fin
 
 import public Data.Maybe
 import Data.Nat
-import Decidable.Equality
+import Decidable.Equality.Core
 
 %default total
 
@@ -76,7 +76,7 @@ weaken (FS k) = FS $ weaken k
 
 ||| Weaken the bound on a Fin by some amount
 public export
-weakenN : (n : Nat) -> Fin m -> Fin (m + n)
+weakenN : (0 n : Nat) -> Fin m -> Fin (m + n)
 weakenN n FZ = FZ
 weakenN n (FS f) = FS $ weakenN n f
 
@@ -140,7 +140,7 @@ integerToFin x n = if x >= 0 then natToFin (fromInteger x) n else Nothing
 ||| @ prf an automatically-constructed proof that `x` is in bounds
 public export
 fromInteger : (x : Integer) -> {n : Nat} ->
-              {auto prf : (IsJust (integerToFin x n))} ->
+              {auto 0 prf : (IsJust (integerToFin x n))} ->
               Fin n
 fromInteger {n} x {prf} with (integerToFin x n)
   fromInteger {n} x {prf = ItIsJust} | Just y = y

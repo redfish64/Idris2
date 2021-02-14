@@ -16,15 +16,15 @@ import Parser.Source
 
 import Data.List
 import Data.List1
-import Data.List.Extra
+import Libraries.Data.List.Extra
 import Data.Maybe
 import Data.Stream
 import Data.Strings
-import Data.String.Extra
-import Text.PrettyPrint.Prettyprinter
-import Text.PrettyPrint.Prettyprinter.Util
+import Libraries.Data.String.Extra
+import Libraries.Text.PrettyPrint.Prettyprinter
+import Libraries.Text.PrettyPrint.Prettyprinter.Util
 import System.File
-import Utils.String
+import Libraries.Utils.String
 
 %default covering
 
@@ -66,10 +66,9 @@ ploc fc@(MkFC fn s e) = do
     source <- lines <$> getCurrentElabSource
     if sr == er
        then do
-         let firstRow = annotate FileCtxt (spaces (cast $ nsize + 2) <+> pipe)
-         let line = (annotate FileCtxt pipe) <++> maybe emptyDoc pretty (elemAt source sr)
-         let emph = (annotate FileCtxt pipe) <++> spaces (cast sc) <+> annotate Error (pretty (Extra.replicate (ec `minus` sc) '^'))
-         pure $ vsep [emptyDoc, head, firstRow, annotate FileCtxt (space <+> pretty (sr + 1)) <++> align (vsep [line, emph]), emptyDoc]
+         let emph = spaces (cast $ nsize + sc + 4) <+> annotate Error (pretty (Extra.replicate (ec `minus` sc) '^'))
+         let firstr = er `minus` 4
+         pure $ vsep ([emptyDoc, head] ++ (addLineNumbers nsize firstr (pretty <$> extractRange firstr er source)) ++ [emph]) <+> line
        else pure $ vsep (emptyDoc :: head :: addLineNumbers nsize sr (pretty <$> extractRange sr (Prelude.min er (sr + 5)) source)) <+> line
   where
     extractRange : Nat -> Nat -> List String -> List String
@@ -303,12 +302,12 @@ perror (NotRecordType fc ty)
 perror (IncompatibleFieldUpdate fc flds)
     = pure $ reflow "Field update" <++> concatWith (surround (pretty "->")) (pretty <$> flds)
              <++> reflow "not compatible with other updates at" <+> colon <+> line <+> !(ploc fc)
-perror (InvalidImplicits fc env [Just n] tm)
-    = pure $ errorDesc (code (pretty n) <++> reflow "is not a valid implicit argument in" <++> !(pshow env tm)
+perror (InvalidArgs fc env [n] tm)
+    = pure $ errorDesc (code (pretty n) <++> reflow "is not a valid argument in" <++> !(pshow env tm)
         <+> dot) <+> line <+> !(ploc fc)
-perror (InvalidImplicits fc env ns tm)
+perror (InvalidArgs fc env ns tm)
     = pure $ errorDesc (concatWith (surround (comma <+> space)) (code . pretty <$> ns)
-        <++> reflow "are not valid implicit arguments in" <++> !(pshow env tm) <+> dot)
+        <++> reflow "are not valid arguments in" <++> !(pshow env tm) <+> dot)
         <+> line <+> !(ploc fc)
 perror (TryWithImplicits fc env imps)
     = pure $ errorDesc (reflow "Need to bind implicits"

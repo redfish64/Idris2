@@ -6,14 +6,14 @@ import public Parser.Source
 import        Parser.Lexer.Source
 import        TTImp.TTImp
 
-import public Text.Parser
+import public Libraries.Text.Parser
 import        Data.Either
 import        Data.List
 import        Data.List.Views
 import        Data.List1
 import        Data.Maybe
 import        Data.Strings
-import Utils.String
+import Libraries.Utils.String
 
 import Idris.Parser.Let
 
@@ -100,13 +100,15 @@ iOperator
     = operator <|> (symbol "`" *> name <* symbol "`")
 
 data ArgType
-    = ExpArg PTerm
-    | ImpArg (Maybe Name) PTerm
+    = UnnamedExpArg PTerm
+    | UnnamedAutoArg PTerm
+    | NamedArg Name PTerm
     | WithArg PTerm
 
 argTerm : ArgType -> PTerm
-argTerm (ExpArg t) = t
-argTerm (ImpArg _ t) = t
+argTerm (UnnamedExpArg t) = t
+argTerm (UnnamedAutoArg t) = t
+argTerm (NamedArg _ t) = t
 argTerm (WithArg t) = t
 
 mutual
@@ -114,13 +116,13 @@ mutual
   appExpr q fname indents
       = case_ fname indents
     <|> doBlock fname indents
-    <|> lambdaCase fname indents
+    <|> lam fname indents
     <|> lazy fname indents
     <|> if_ fname indents
     <|> with_ fname indents
     <|> do b <- bounds (MkPair <$> simpleExpr fname indents <*> many (argExpr q fname indents))
            (f, args) <- pure b.val
-           pure (applyExpImp (start b) (end b) f args)
+           pure (applyExpImp (start b) (end b) f (concat args))
     <|> do b <- bounds (MkPair <$> iOperator <*> expr pdef fname indents)
            (op, arg) <- pure b.val
            pure (PPrefixOp (boundToFC fname b) op arg)
@@ -130,42 +132,55 @@ mutual
                     List ArgType ->
                     PTerm
       applyExpImp start end f [] = f
-      applyExpImp start end f (ExpArg exp :: args)
+      applyExpImp start end f (UnnamedExpArg exp :: args)
           = applyExpImp start end (PApp (MkFC fname start end) f exp) args
-      applyExpImp start end f (ImpArg n imp :: args)
-          = applyExpImp start end (PImplicitApp (MkFC fname start end) f n imp) args
+      applyExpImp start end f (UnnamedAutoArg imp :: args)
+          = applyExpImp start end (PAutoApp (MkFC fname start end) f imp) args
+      applyExpImp start end f (NamedArg n imp :: args)
+          = applyExpImp start end (PNamedApp (MkFC fname start end) f n imp) args
       applyExpImp start end f (WithArg exp :: args)
           = applyExpImp start end (PWithApp (MkFC fname start end) f exp) args
 
-  argExpr : ParseOpts -> FileName -> IndentInfo -> Rule ArgType
+  argExpr : ParseOpts -> FileName -> IndentInfo -> Rule (List ArgType)
   argExpr q fname indents
       = do continue indents
            arg <- simpleExpr fname indents
            the (SourceEmptyRule _) $ case arg of
-                PHole loc _ n => pure (ExpArg (PHole loc True n))
-                t => pure (ExpArg t)
+                PHole loc _ n => pure [UnnamedExpArg (PHole loc True n)]
+                t => pure [UnnamedExpArg t]
     <|> do continue indents
-           arg <- implicitArg fname indents
-           pure (ImpArg (fst arg) (snd arg))
+           braceArgs fname indents
     <|> if withOK q
            then do continue indents
                    symbol "|"
                    arg <- expr (record {withOK = False} q) fname indents
-                   pure (WithArg arg)
+                   pure [WithArg arg]
            else fail "| not allowed here"
+    where
+      braceArgs : FileName -> IndentInfo -> Rule (List ArgType)
+      braceArgs fname indents
+          = do start <- bounds (symbol "{")
+               list <- sepBy (symbol ",")
+                        $ do x <- bounds unqualifiedName
+                             option (NamedArg (UN x.val) $ PRef (boundToFC fname x) (UN x.val))
+                              $ do tm <- symbol "=" *> expr pdef fname indents
+                                   pure (NamedArg (UN x.val) tm)
+               matchAny <- option [] (if isCons list then
+                                         do symbol ","
+                                            x <- bounds (symbol "_")
+                                            pure [NamedArg (UN "_") (PImplicit (boundToFC fname x))]
+                                      else fail "non-empty list required")
+               end <- bounds (symbol "}")
+               matchAny <- pure $ if isNil list
+                                  then [NamedArg (UN "_") (PImplicit (boundToFC fname (mergeBounds start end)))]
+                                  else matchAny
+               pure $ matchAny ++ list
 
-  implicitArg : FileName -> IndentInfo -> Rule (Maybe Name, PTerm)
-  implicitArg fname indents
-      = do x <- bounds (symbol "{" *> unqualifiedName)
-           (do tm <- symbol "=" *> commit *> expr pdef fname indents <* symbol "}"
-               pure (Just (UN x.val), tm))
-             <|> (do b <- bounds (symbol "}")
-                     pure (Just (UN x.val), PRef (boundToFC fname (mergeBounds x b)) (UN x.val)))
-    <|> do symbol "@{"
-           commit
-           tm <- expr pdef fname indents
-           symbol "}"
-           pure (Nothing, tm)
+        <|> do symbol "@{"
+               commit
+               tm <- expr pdef fname indents
+               symbol "}"
+               pure [UnnamedAutoArg tm]
 
   with_ : FileName -> IndentInfo -> Rule PTerm
   with_ fname indents
@@ -360,13 +375,13 @@ mutual
 
   simplerExpr : FileName -> IndentInfo -> Rule PTerm
   simplerExpr fname indents
-      = do b <- bounds (do x <- unqualifiedName
+      = do b <- bounds (do x <- bounds unqualifiedName
                            symbol "@"
                            commit
                            expr <- simpleExpr fname indents
                            pure (x, expr))
            (x, expr) <- pure b.val
-           pure (PAs (boundToFC fname b) (UN x) expr)
+           pure (PAs (boundToFC fname b) (boundToFC fname x) (UN x.val) expr)
     <|> atom fname
     <|> binder fname indents
     <|> rewrite_ fname indents
@@ -375,7 +390,7 @@ mutual
            pure (PDotted (boundToFC fname b) b.val)
     <|> do b <- bounds (symbol "`(" *> expr pdef fname indents <* symbol ")")
            pure (PQuote (boundToFC fname b) b.val)
-    <|> do b <- bounds (symbol "`{{" *> name <* symbol "}}")
+    <|> do b <- bounds (symbol "`{{" *> name <* symbol "}" <* symbol "}")
            pure (PQuoteName (boundToFC fname b) b.val)
     <|> do b <- bounds (symbol "`[" *> nonEmptyBlock (topDecl fname) <* symbol "]")
            pure (PQuoteDecl (boundToFC fname b) (collectDefs (concat b.val)))
@@ -401,11 +416,8 @@ mutual
 
   multiplicity : SourceEmptyRule (Maybe Integer)
   multiplicity
-      = do c <- intLit
-           pure (Just c)
---     <|> do symbol "&"
---            pure (Just 2) -- Borrowing, not implemented
-    <|> pure Nothing
+      = optional $ intLit
+--     <|> 2 <$ symbol "&" Borrowing, not implemented
 
   getMult : Maybe Integer -> SourceEmptyRule RigCount
   getMult (Just 0) = pure erased
@@ -522,17 +534,37 @@ mutual
   lam : FileName -> IndentInfo -> Rule PTerm
   lam fname indents
       = do symbol "\\"
-           binders <- bindList fname indents
-           symbol "=>"
-           mustContinue indents Nothing
-           scope <- expr pdef fname indents
-           pure (bindAll binders scope)
+           commit
+           switch <- optional (bounds $ keyword "case")
+           case switch of
+             Nothing => continueLam
+             Just r  => continueLamCase r
+
      where
+
        bindAll : List (RigCount, WithBounds PTerm, PTerm) -> PTerm -> PTerm
        bindAll [] scope = scope
        bindAll ((rig, pat, ty) :: rest) scope
            = PLam (boundToFC fname pat) rig Explicit pat.val ty
                   (bindAll rest scope)
+
+       continueLam : Rule PTerm
+       continueLam = do
+           binders <- bindList fname indents
+           symbol "=>"
+           mustContinue indents Nothing
+           scope <- expr pdef fname indents
+           pure (bindAll binders scope)
+
+       continueLamCase : WithBounds () -> Rule PTerm
+       continueLamCase endCase = do
+           b <- bounds (forget <$> nonEmptyBlock (caseAlt fname))
+           pure
+            (let fc = boundToFC fname b
+                 fcCase = boundToFC fname endCase
+                 n = MN "lcase" 0 in
+              PLam fcCase top Explicit (PRef fcCase n) (PInfer fcCase) $
+                PCase fc (PRef fcCase n) b.val)
 
   letBlock : FileName -> IndentInfo -> Rule (WithBounds (Either LetBinder LetDecl))
   letBlock fname indents = bounds (letBinder <||> letDecl) where
@@ -570,20 +602,6 @@ mutual
            (scr, alts) <- pure b.val
            pure (PCase (boundToFC fname b) scr alts)
 
-  lambdaCase : FileName -> IndentInfo -> Rule PTerm
-  lambdaCase fname indents
-      = do b <- bounds (do endCase <- bounds (symbol "\\" *> keyword "case")
-                           commit
-                           alts <- block (caseAlt fname)
-                           pure (endCase, alts))
-           (endCase, alts) <- pure b.val
-           pure $
-            (let fc = boundToFC fname b
-                 fcCase = boundToFC fname endCase
-                 n = MN "lcase" 0 in
-              PLam fcCase top Explicit (PRef fcCase n) (PInfer fcCase) $
-                PCase fc (PRef fcCase n) alts)
-
   caseAlt : FileName -> IndentInfo -> Rule PClause
   caseAlt fname indents
       = do lhs <- bounds (opExpr plhs fname indents)
@@ -613,18 +631,18 @@ mutual
 
   record_ : FileName -> IndentInfo -> Rule PTerm
   record_ fname indents
-      = do b <- bounds (do keyword "record"
+      = do b <- bounds (do kw <- option False (keyword "record" *> pure True) -- TODO deprecated
                            symbol "{"
                            commit
-                           fs <- sepBy1 (symbol ",") (field fname indents)
+                           fs <- sepBy1 (symbol ",") (field kw fname indents)
                            symbol "}"
                            pure fs)
            pure (PUpdate (boundToFC fname b) b.val)
 
-  field : FileName -> IndentInfo -> Rule PFieldUpdate
-  field fname indents
+  field : Bool -> FileName -> IndentInfo -> Rule PFieldUpdate
+  field kw fname indents
       = do path <- map fieldName <$> [| name :: many recFieldCompat |]
-           upd <- (symbol "=" *> pure PSetField)
+           upd <- (ifThenElse kw (symbol "=") (symbol ":=") *> pure PSetField)
                       <|>
                   (symbol "$=" *> pure PSetFieldApp)
            val <- opExpr plhs fname indents
@@ -673,16 +691,16 @@ mutual
 
   doAct : FileName -> IndentInfo -> Rule (List PDo)
   doAct fname indents
-      = do b <- bounds (do n <- name
+      = do b <- bounds (do n <- bounds name
                            -- If the name doesn't begin with a lower case letter, we should
                            -- treat this as a pattern, so fail
-                           validPatternVar n
+                           validPatternVar n.val
                            symbol "<-"
                            val <- expr pdef fname indents
                            pure (n, val))
            atEnd indents
            (n, val) <- pure b.val
-           pure [DoBind (boundToFC fname b) n val]
+           pure [DoBind (boundToFC fname b) (boundToFC fname n) n.val val]
     <|> do keyword "let"
            commit
            res <- nonEmptyBlock (letBlock fname)
@@ -762,14 +780,14 @@ visibility
 tyDecl : String -> FileName -> IndentInfo -> Rule PTypeDecl
 tyDecl predoc fname indents
     = do b <- bounds (do doc   <- option "" documentation
-                         n     <- name
+                         n     <- bounds name
                          symbol ":"
                          mustWork $
                             do ty  <- expr pdef fname indents
-                               pure (doc, n, ty))
+                               pure (doc, n.val, boundToFC fname n, ty))
          atEnd indents
-         (doc, n, ty) <- pure b.val
-         pure (MkPTy (boundToFC fname b) n (predoc ++ doc) ty)
+         let (doc, n, nFC, ty) = b.val
+         pure (MkPTy (boundToFC fname b) nFC n (predoc ++ doc) ty)
 
 withFlags : SourceEmptyRule (List WithFlag)
 withFlags
@@ -828,34 +846,28 @@ mutual
 mkTyConType : FC -> List Name -> PTerm
 mkTyConType fc [] = PType fc
 mkTyConType fc (x :: xs)
-   = PPi fc linear Explicit Nothing (PType fc) (mkTyConType fc xs)
+   = PPi fc top Explicit Nothing (PType fc) (mkTyConType fc xs)
 
-mkDataConType : FC -> PTerm -> List ArgType -> PTerm
-mkDataConType fc ret [] = ret
-mkDataConType fc ret (ExpArg x :: xs)
-    = PPi fc linear Explicit Nothing x (mkDataConType fc ret xs)
-mkDataConType fc ret (ImpArg n (PRef fc' x) :: xs)
-    = if n == Just x
-         then PPi fc linear Implicit n (PType fc')
-                          (mkDataConType fc ret xs)
-         else PPi fc linear Implicit n (PRef fc' x)
-                          (mkDataConType fc ret xs)
-mkDataConType fc ret (ImpArg n x :: xs)
-    = PPi fc linear Implicit n x (mkDataConType fc ret xs)
-mkDataConType fc ret (WithArg a :: xs)
-    = PImplicit fc -- This can't happen because we parse constructors without
-                   -- withOK set
+mkDataConType : FC -> PTerm -> List ArgType -> Maybe PTerm
+mkDataConType fc ret [] = Just ret
+mkDataConType fc ret (UnnamedExpArg x :: xs)
+    = PPi fc top Explicit Nothing x <$> mkDataConType fc ret xs
+mkDataConType fc ret (UnnamedAutoArg x :: xs)
+    = PPi fc top AutoImplicit Nothing x <$> mkDataConType fc ret xs
+mkDataConType _ _ _ -- with and named applications not allowed in simple ADTs
+    = Nothing
 
 simpleCon : FileName -> PTerm -> IndentInfo -> Rule PTypeDecl
 simpleCon fname ret indents
     = do b <- bounds (do cdoc   <- option "" documentation
-                         cname  <- name
+                         cname  <- bounds name
                          params <- many (argExpr plhs fname indents)
-                         pure (cdoc, cname, params))
+                         pure (cdoc, cname.val, boundToFC fname cname, params))
          atEnd indents
-         (cdoc, cname, params) <- pure b.val
-         pure (let cfc = boundToFC fname b in
-                   MkPTy cfc cname cdoc (mkDataConType cfc ret params))
+         (cdoc, cname, cnameFC, params) <- pure b.val
+         let cfc = boundToFC fname b
+         fromMaybe (fatalError "Named arguments not allowed in ADT constructors")
+                   (pure . MkPTy cfc cnameFC cname cdoc <$> mkDataConType cfc ret (concat params))
 
 simpleData : FileName -> WithBounds t -> Name -> IndentInfo -> Rule PDataDecl
 simpleData fname start n indents
@@ -942,6 +954,13 @@ totalityOpt
   <|> (keyword "total" *> pure Total)
   <|> (keyword "covering" *> pure CoveringOnly)
 
+logLevel : Rule (Maybe LogLevel)
+logLevel
+  = (Nothing <$ exactIdent "off")
+    <|> do topic <- optional ((:::) <$> unqualifiedName <*> many aDotIdent)
+           lvl <- intLit
+           pure (Just (mkLogLevel' topic (fromInteger lvl)))
+
 directive : FileName -> IndentInfo -> Rule Directive
 directive fname indents
     = do pragma "hide"
@@ -953,10 +972,9 @@ directive fname indents
 --          atEnd indents
 --          pure (Hide True n)
   <|> do pragma "logging"
-         topic <- optional ((:::) <$> unqualifiedName <*> many aDotIdent)
-         lvl <- intLit
+         lvl <- logLevel
          atEnd indents
-         pure (Logging (mkLogLevel' topic (fromInteger lvl)))
+         pure (Logging lvl)
   <|> do pragma "auto_lazy"
          b <- onoff
          atEnd indents
@@ -1174,16 +1192,18 @@ implBinds fname indents
          pure ((n, rig, tm) :: more)
   <|> pure []
 
-ifaceParam : FileName -> IndentInfo -> Rule (List Name, PTerm)
+ifaceParam : FileName -> IndentInfo -> Rule (List Name, (RigCount, PTerm))
 ifaceParam fname indents
     = do symbol "("
+         m <- multiplicity
+         rig <- getMult m
          ns <- sepBy1 (symbol ",") name
          symbol ":"
          tm <- expr pdef fname indents
          symbol ")"
-         pure (ns, tm)
+         pure (ns, (rig, tm))
   <|> do n <- bounds name
-         pure ([n.val], PInfer (boundToFC fname n))
+         pure ([n.val], (erased, PInfer (boundToFC fname n)))
 
 ifaceDecl : FileName -> IndentInfo -> Rule PDecl
 ifaceDecl fname indents
@@ -1195,7 +1215,7 @@ ifaceDecl fname indents
                          cons   <- constraints fname indents
                          n      <- name
                          paramss <- many (ifaceParam fname indents)
-                         let params = concatMap (\ (ns, t) => map (\ n => (n, t)) ns) paramss
+                         let params = concatMap (\ (ns, rt) => map (\ n => (n, rt)) ns) paramss
                          det    <- option []
                                      (do symbol "|"
                                          sepBy (symbol ",") name)
@@ -1254,8 +1274,7 @@ fieldDecl fname indents
     fieldBody : String -> PiInfo PTerm -> Rule (List PField)
     fieldBody doc p
         = do b <- bounds (do m <- multiplicity
-                             rigin <- getMult m
-                             let rig = if isErased rigin then erased else linear
+                             rig <- getMult m
                              ns <- sepBy1 (symbol ",") name
                              symbol ":"
                              ty <- expr pdef fname indents
@@ -1390,13 +1409,14 @@ topDecl fname indents
 -- collectDefs : List PDecl -> List PDecl
 collectDefs [] = []
 collectDefs (PDef annot cs :: ds)
-    = let (cs', rest) = spanBy isClause ds in
-          PDef annot (cs ++ concat cs') :: assert_total (collectDefs rest)
-  where
-    isClause : PDecl -> Maybe (List PClause)
-    isClause (PDef annot cs)
-        = Just cs
-    isClause _ = Nothing
+    = let (csWithFC, rest) = spanBy isPDef ds
+          cs' = cs ++ concat (map snd csWithFC)
+          annot' = foldr
+                   (\fc1, fc2 => fromMaybe EmptyFC (mergeFC fc1 fc2))
+                   annot
+                   (map fst csWithFC)
+      in
+          PDef annot' cs' :: assert_total (collectDefs rest)
 collectDefs (PNamespace annot ns nds :: ds)
     = PNamespace annot ns (collectDefs nds) :: collectDefs ds
 collectDefs (PMutual annot nds :: ds)
@@ -1758,7 +1778,7 @@ compileArgsCmd parseCmd command doc
       tm <- expr pdef "(interactive)" init
       pure (command tm n)
 
-loggingArgCmd : ParseCmd -> (LogLevel -> REPLCmd) -> String -> CommandDefinition
+loggingArgCmd : ParseCmd -> (Maybe LogLevel -> REPLCmd) -> String -> CommandDefinition
 loggingArgCmd parseCmd command doc = (names, Args [StringArg, NumberArg], doc, parse) where
 
   names : List String
@@ -1768,24 +1788,26 @@ loggingArgCmd parseCmd command doc = (names, Args [StringArg, NumberArg], doc, p
   parse = do
     symbol ":"
     runParseCmd parseCmd
-    topic <- optional ((:::) <$> unqualifiedName <*> many aDotIdent)
-    lvl <- intLit
-    pure (command (mkLogLevel' topic (fromInteger lvl)))
+    lvl <- logLevel
+    pure (command lvl)
 
 parserCommandsForHelp : CommandTable
 parserCommandsForHelp =
   [ exprArgCmd (ParseREPLCmd ["t", "type"]) Check "Check the type of an expression"
   , nameArgCmd (ParseREPLCmd ["printdef"]) PrintDef "Show the definition of a function"
-  , nameArgCmd (ParseREPLCmd ["s", "search"]) ProofSearch "Search for values by type"
+  , exprArgCmd (ParseREPLCmd ["s", "search"]) TypeSearch "Search for values by type"
   , nameArgCmd (ParseIdentCmd "di") DebugInfo "Show debugging information for a name"
   , moduleArgCmd (ParseKeywordCmd "module") ImportMod "Import an extra module"
   , noArgCmd (ParseREPLCmd ["q", "quit", "exit"]) Quit "Exit the Idris system"
   , noArgCmd (ParseREPLCmd ["cwd"]) CWD "Displays the current working directory"
+  , stringArgCmd (ParseREPLCmd ["cd"]) CD "Change the current working directory"
+  , stringArgCmd (ParseREPLCmd ["sh"]) RunShellCommand "Run a shell command"
   , optArgCmd (ParseIdentCmd "set") SetOpt True "Set an option"
   , optArgCmd (ParseIdentCmd "unset") SetOpt False "Unset an option"
   , compileArgsCmd (ParseREPLCmd ["c", "compile"]) Compile "Compile to an executable"
   , exprArgCmd (ParseIdentCmd "exec") Exec "Compile to an executable and run"
   , stringArgCmd (ParseIdentCmd "directive") CGDirective "Set a codegen-specific directive"
+  , stringArgCmd (ParseREPLCmd ["l", "load"]) Load "Load a file"
   , noArgCmd (ParseREPLCmd ["r", "reload"]) Reload "Reload current file"
   , noArgCmd (ParseREPLCmd ["e", "edit"]) Edit "Edit current file using $EDITOR or $VISUAL"
   , nameArgCmd (ParseREPLCmd ["miss", "missing"]) Missing "Show missing clauses"

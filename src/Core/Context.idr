@@ -10,13 +10,13 @@ import        Core.Options
 import public Core.Options.Log
 import public Core.TT
 
-import Utils.Binary
+import Libraries.Utils.Binary
 
-import Data.IntMap
+import Libraries.Data.IntMap
 import Data.IOArray
 import Data.List
-import Data.NameMap
-import Data.StringMap
+import Libraries.Data.NameMap
+import Libraries.Data.StringMap
 
 import System
 import System.Directory
@@ -336,8 +336,11 @@ record Context where
     -- access in a program - in all other cases, we'll assume everything is
     -- visible
     visibleNS : List Namespace
-    allPublic : Bool -- treat everything as public. This is only intended
+    allPublic : Bool -- treat everything as public. This is intended
                      -- for checking partially evaluated definitions
+                     -- or for use outside of the main compilation
+                     -- process (e.g. when implementing interactive
+                     -- features such as case splitting).
     inlineOnly : Bool -- only return things with the 'alwaysReduce' flag
     hidden : NameMap () -- Never return these
 
@@ -361,7 +364,19 @@ initCtxtS : Int -> Core Context
 initCtxtS s
     = do arr <- coreLift $ newArray s
          aref <- newRef Arr arr
-         pure $ MkContext 0 0 empty empty aref 0 empty [partialEvalNS] False False empty
+         pure $ MkContext
+            { firstEntry = 0
+            , nextEntry = 0
+            , resolvedAs = empty
+            , possibles = empty
+            , content = aref
+            , branchDepth = 0
+            , staging = empty
+            , visibleNS = [partialEvalNS]
+            , allPublic = False
+            , inlineOnly = False
+            , hidden = empty
+            }
 
 export
 initCtxt : Core Context
@@ -585,9 +600,29 @@ export
 newDef : FC -> Name -> RigCount -> List Name ->
          ClosedTerm -> Visibility -> Def -> GlobalDef
 newDef fc n rig vars ty vis def
-    = MkGlobalDef fc n ty [] [] [] []
-                  rig vars vis unchecked [] Nothing Nothing False False False def
-                  Nothing Nothing []
+    = MkGlobalDef
+        { location = fc
+        , fullname = n
+        , type = ty
+        , eraseArgs = []
+        , safeErase = []
+        , specArgs = []
+        , inferrable = []
+        , multiplicity = rig
+        , vars = vars
+        , visibility = vis
+        , totality = unchecked
+        , flags = []
+        , refersToM = Nothing
+        , refersToRuntimeM = Nothing
+        , invertible = False
+        , noCycles = False
+        , linearChecked = False
+        , definition = def
+        , compexpr = Nothing
+        , namedcompexpr = Nothing
+        , sizeChange = []
+        }
 
 -- Rewrite rules, applied after type checking, for runtime code only
 -- LHS and RHS must have the same type, but we don't (currently) require that
@@ -758,6 +793,15 @@ HasNames (Env Term vars) where
       = pure $ !(traverse (resolved gam) b) :: !(resolved gam bs)
 
 export
+HasNames Clause where
+  full gam (MkClause env lhs rhs)
+     = pure $ MkClause !(full gam env) !(full gam lhs) !(full gam rhs)
+
+  resolved gam (MkClause env lhs rhs)
+    = [| MkClause (resolved gam env) (resolved gam lhs) (resolved gam rhs) |]
+
+
+export
 HasNames Def where
   full gam (PMDef r args ct rt pats)
       = pure $ PMDef r args !(full gam ct) !(full gam rt)
@@ -924,6 +968,8 @@ record Defs where
   openHints : NameMap ()
      -- ^ currently open global hints; just for the rest of this module (not exported)
      -- and prioritised
+  localHints : NameMap ()
+     -- ^ Hints defined in the current environment
   saveTypeHints : List (Name, Name, Bool)
      -- We don't look up anything in here, it's merely for saving out to TTC.
      -- We save the hints in the 'GlobalDef' itself for faster lookup.
@@ -975,9 +1021,35 @@ export
 initDefs : Core Defs
 initDefs
     = do gam <- initCtxt
-         pure (MkDefs gam [] mainNS [] defaults empty 100
-                      empty empty empty [] [] empty []
-                      empty 5381 [] [] [] [] [] empty empty empty empty [])
+         pure $ MkDefs
+           { gamma = gam
+           , mutData = []
+           , currentNS = mainNS
+           , nestedNS = []
+           , options = defaults
+           , toSave = empty
+           , nextTag = 100
+           , typeHints = empty
+           , autoHints = empty
+           , openHints = empty
+           , localHints = empty
+           , saveTypeHints = []
+           , saveAutoHints = []
+           , transforms = empty
+           , saveTransforms = []
+           , namedirectives = empty
+           , ifaceHash = 5381
+           , importHashes = []
+           , imported = []
+           , allImported = []
+           , cgdirectives = []
+           , toCompileCase = []
+           , toIR = empty
+           , userHoles = empty
+           , peFailures = empty
+           , timings = empty
+           , warnings = []
+           }
 
 -- Reset the context, except for the options
 export
@@ -1112,12 +1184,32 @@ addBuiltin : {arity : _} ->
              {auto x : Ref Ctxt Defs} ->
              Name -> ClosedTerm -> Totality ->
              PrimFn arity -> Core ()
-addBuiltin n ty tot op
-    = do addDef n (MkGlobalDef emptyFC n ty [] [] [] [] top [] Public tot
-                               [Inline] Nothing Nothing
-                               False False True (Builtin op)
-                               Nothing Nothing [])
-         pure ()
+addBuiltin n ty tot op =
+    do addDef n $ MkGlobalDef
+         { location = emptyFC
+         , fullname = n
+         , type = ty
+         , eraseArgs = []
+         , safeErase = []
+         , specArgs = []
+         , inferrable = []
+         , multiplicity = top
+         , vars = []
+         , visibility = Public
+         , totality = tot
+         , flags = [Inline]
+         , refersToM = Nothing
+         , refersToRuntimeM = Nothing
+         , invertible = False
+         , noCycles = False
+         , linearChecked = True
+         , definition = Builtin op
+         , compexpr = Nothing
+         , namedcompexpr = Nothing
+         , sizeChange = []
+         }
+
+       pure ()
 
 export
 updateDef : {auto c : Ref Ctxt Defs} ->
@@ -1645,6 +1737,14 @@ addGlobalHint hintn_in isdef
 
          put Ctxt (record { autoHints $= insert hintn isdef,
                             saveAutoHints $= ((hintn, isdef) ::) } defs)
+
+export
+addLocalHint : {auto c : Ref Ctxt Defs} ->
+               Name -> Core ()
+addLocalHint hintn_in
+    = do defs <- get Ctxt
+         hintn <- toResolvedNames hintn_in
+         put Ctxt (record { localHints $= insert hintn () } defs)
 
 export
 addOpenHint : {auto c : Ref Ctxt Defs} -> Name -> Core ()
@@ -2202,10 +2302,12 @@ getPrimitiveNames = pure $ catMaybes [!fromIntegerName, !fromStringName, !fromCh
 
 export
 addLogLevel : {auto c : Ref Ctxt Defs} ->
-              LogLevel -> Core ()
-addLogLevel l
+              Maybe LogLevel -> Core ()
+addLogLevel lvl
     = do defs <- get Ctxt
-         put Ctxt (record { options->session->logLevel $= insertLogLevel l } defs)
+         case lvl of
+           Nothing => put Ctxt (record { options->session->logLevel = defaultLogLevel } defs)
+           Just l  => put Ctxt (record { options->session->logLevel $= insertLogLevel l } defs)
 
 export
 withLogLevel : {auto c : Ref Ctxt Defs} ->

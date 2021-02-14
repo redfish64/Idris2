@@ -1,11 +1,11 @@
 module Compiler.ES.ES
 
 import Compiler.ES.Imperative
-import Utils.Hex
+import Libraries.Utils.Hex
 import Data.List1
 import Data.Strings
-import Data.SortedMap
-import Data.String.Extra
+import Libraries.Data.SortedMap
+import Libraries.Data.String.Extra
 
 import Core.Directory
 
@@ -55,20 +55,6 @@ addConstToPreamble name def =
     let v = "const " ++ newName ++ " = (" ++ def ++ ");"
     addToPreamble name newName v
 
-requireSafe : String -> String
-requireSafe = pack . map (\c => case c of
-                                     '@' => '_'
-                                     '/' => '_'
-                                     '-' => '_'
-                                     _ => c
-                         ) . unpack
-addRequireToPreamble : {auto c : Ref ESs ESSt} -> String -> Core String
-addRequireToPreamble name =
-  do
-    let newName = "__require_" ++ requireSafe name
-    let v = "const " ++ newName ++ " = require(" ++ jsString name ++ ");"
-    addToPreamble name newName v
-
 addSupportToPreamble : {auto c : Ref ESs ESSt} -> String -> String -> Core String
 addSupportToPreamble name code =
   addToPreamble name name code
@@ -78,19 +64,16 @@ addStringIteratorToPreamble =
   do
     let defs = "
 function __prim_stringIteratorNew(str) {
-  return str[Symbol.iterator]();
+  return 0;
+}
+function __prim_stringIteratorToString(_, str, it, f) {
+  return f(str.slice(it));
 }
 function __prim_stringIteratorNext(str, it) {
-  const char = it.next();
-  if (char.done) {
-    return {h: 0}; // EOF
-  } else {
-    return {
-      h: 1, // Character
-      a1: char.value,
-      a2: it
-    };
-  }
+  if (it >= str.length)
+    return {h: 0};
+  else
+    return {h: 1, a1: str.charAt(it), a2: it + 1};
 }"
     let name = "stringIterator"
     let newName = esName name
@@ -109,7 +92,7 @@ keywordSafe "var" = "var_"
 keywordSafe s = s
 
 jsName : Name -> String
-jsName (NS ns n) = showNSWithSep "_" ns ++ "_" ++ jsName n
+jsName (NS ns n) = jsIdent (showNSWithSep "_" ns) ++ "_" ++ jsName n
 jsName (UN n) = keywordSafe $ jsIdent n
 jsName (MN n i) = jsIdent n ++ "_" ++ show i
 jsName (PV n d) = "pat__" ++ jsName n
@@ -158,7 +141,7 @@ boundedUInt : {auto c : Ref ESs ESSt} -> Int -> String -> Core String
 boundedUInt bits e =
   do
     n <- makeIntBound bits
-    fn <- addConstToPreamble ("truncToUInt"++show bits) ("x=>{const m = x%" ++ n ++ ";return m>0?m:m+" ++ n ++ "}")
+    fn <- addConstToPreamble ("truncToUInt"++show bits) ("x=>{const m = x%" ++ n ++ ";return m>=0?m:m+" ++ n ++ "}")
     pure $ fn ++ "(" ++ e ++ ")"
 
 boundedIntOp : {auto c : Ref ESs ESSt} -> Int -> String -> String -> String -> Core String
@@ -215,13 +198,13 @@ jsOp (Mul ty) [x, y] = pure $ binOp "*" x y
 jsOp (Div ty) [x, y] = pure $ binOp "/" x y
 jsOp (Mod ty) [x, y] = pure $ binOp "%" x y
 jsOp (Neg ty) [x] = pure $ "(-(" ++ x ++ "))"
-jsOp (ShiftL IntType) [x, y] = pure $ !(boundedUIntOp 63 "<<" x y)
+jsOp (ShiftL IntType) [x, y] = pure $ !(boundedIntOp 63 "<<" x y)
 jsOp (ShiftL Bits8Type) [x, y] = pure $ !(boundedUIntOp 8 "<<" x y)
 jsOp (ShiftL Bits16Type) [x, y] = pure $ !(boundedUIntOp 16 "<<" x y)
 jsOp (ShiftL Bits32Type) [x, y] = pure $ !(boundedUIntOp 32 "<<" x y)
 jsOp (ShiftL Bits64Type) [x, y] = pure $ !(boundedUIntOp 64 "<<" x y)
 jsOp (ShiftL ty) [x, y] = pure $ binOp "<<" x y
-jsOp (ShiftR IntType) [x, y] = pure $ !(boundedUIntOp 63 ">>" x y)
+jsOp (ShiftR IntType) [x, y] = pure $ !(boundedIntOp 63 ">>" x y)
 jsOp (ShiftR Bits8Type) [x, y] = pure $ !(boundedUIntOp 8 ">>" x y)
 jsOp (ShiftR Bits16Type) [x, y] = pure $ !(boundedUIntOp 16 ">>" x y)
 jsOp (ShiftR Bits32Type) [x, y] = pure $ !(boundedUIntOp 32 ">>" x y)
@@ -258,17 +241,30 @@ jsOp DoubleATan [x] = pure $ "Math.atan(" ++ x ++ ")"
 jsOp DoubleSqrt [x] = pure $ "Math.sqrt(" ++ x ++ ")"
 jsOp DoubleFloor [x] = pure $ "Math.floor(" ++ x ++ ")"
 jsOp DoubleCeiling [x] = pure $ "Math.ceil(" ++ x ++ ")"
+
 jsOp (Cast IntType CharType) [x] = pure $ "String.fromCodePoint(" ++ fromBigInt x ++ ")"
 jsOp (Cast IntegerType CharType) [x] = pure $ "String.fromCodePoint(" ++ fromBigInt x ++ ")"
 jsOp (Cast CharType IntType) [x] = pure $ toBigInt $ x ++ ".codePointAt(0)"
 jsOp (Cast CharType IntegerType) [x] = pure $ toBigInt $ x ++ ".codePointAt(0)"
 jsOp (Cast DoubleType IntType) [x] = boundedInt 63 $ "BigInt(Math.floor(" ++ x ++ "))"
 jsOp (Cast DoubleType IntegerType) [x] = pure $ "BigInt(Math.floor(" ++ x ++ "))"
+jsOp (Cast IntType DoubleType) [x] = pure $ "Number(" ++ x ++ ")"
+jsOp (Cast IntegerType DoubleType) [x] = pure $ "Number(" ++ x ++ ")"
 jsOp (Cast StringType IntType) [x] = boundedInt 63 $ !(jsIntegerOfString x)
 jsOp (Cast StringType IntegerType) [x] = jsIntegerOfString x
 jsOp (Cast IntegerType IntType) [x] = boundedInt 63 x
 jsOp (Cast IntType IntegerType) [x] = pure x
 jsOp (Cast StringType DoubleType) [x] = pure $ "parseFloat(" ++ x ++ ")"
+
+jsOp (Cast Bits8Type IntType) [x] = pure x
+jsOp (Cast Bits16Type IntType) [x] = pure x
+jsOp (Cast Bits32Type IntType) [x] = pure x
+jsOp (Cast Bits64Type IntType) [x] = pure x
+
+jsOp (Cast Bits8Type IntegerType) [x] = pure x
+jsOp (Cast Bits16Type IntegerType) [x] = pure x
+jsOp (Cast Bits32Type IntegerType) [x] = pure x
+jsOp (Cast Bits64Type IntegerType) [x] = pure x
 
 jsOp (Cast IntType Bits8Type) [x] = boundedUInt 8 x
 jsOp (Cast IntType Bits16Type) [x] = boundedUInt 16 x
@@ -297,7 +293,7 @@ jsOp (Cast Bits64Type Bits16Type) [x] = boundedUInt 16 x
 jsOp (Cast Bits64Type Bits32Type) [x] = boundedUInt 32 x
 
 jsOp (Cast ty StringType) [x] = pure $ "(''+" ++ x ++ ")"
-jsOp (Cast ty ty2) [x] = jsCrashExp $ "invalid cast: + " ++ show ty ++ " + ' -> ' + " ++ show ty2
+jsOp (Cast ty ty2) [x] = jsCrashExp $ jsString $ "invalid cast: + " ++ show ty ++ " + ' -> ' + " ++ show ty2
 jsOp BelieveMe [_,_,x] = pure x
 jsOp (Crash) [_, msg] = jsCrashExp msg
 
@@ -322,11 +318,6 @@ makeForeign n x =
     let (ty, def) = readCCPart x
     case ty of
       "lambda" => pure $ "const " ++ jsName n ++ " = (" ++ def ++ ")\n"
-      "lambdaRequire" =>
-        do
-          let (libs, def_) = readCCPart def
-          traverseList1 addRequireToPreamble (split (==',') libs)
-          pure $ "const " ++ jsName n ++ " = (" ++ def_ ++ ")\n"
       "support" =>
         do
           let (name, lib_) = break (== ',') def
@@ -340,10 +331,11 @@ makeForeign n x =
           case def of
             "new" => pure $ "const " ++ jsName n ++ " = __prim_stringIteratorNew;\n"
             "next" => pure $ "const " ++ jsName n ++ " = __prim_stringIteratorNext;\n"
-            _ => throw (InternalError $ "invalid string iterator function: " ++ def ++ ", supported functions are \"new\", \"next\"")
+            "toString" => pure $ "const " ++ jsName n ++ " = __prim_stringIteratorToString;\n"
+            _ => throw (InternalError $ "invalid string iterator function: " ++ def ++ ", supported functions are \"new\", \"next\", \"toString\"")
 
 
-      _ => throw (InternalError $ "invalid foreign type : " ++ ty ++ ", supported types are \"lambda\", \"lambdaRequire\", \"support\"")
+      _ => throw (InternalError $ "invalid foreign type : " ++ ty ++ ", supported types are \"lambda\", \"support\"")
 
 foreignDecl : {auto d : Ref Ctxt Defs} -> {auto c : Ref ESs ESSt} -> Name -> List String -> Core String
 foreignDecl n ccs =
@@ -362,10 +354,11 @@ jsPrim (NS _ (UN "prim__arrayGet")) [_,x,p,_] = pure $ "(" ++ x ++ "[" ++ p ++ "
 jsPrim (NS _ (UN "prim__arraySet")) [_,x,p,v,_] = pure $ "(" ++ x ++ "[" ++ p ++ "] = " ++ v ++ ")"
 jsPrim (NS _ (UN "prim__os")) [] =
   do
-    os <- addRequireToPreamble "os"
     let oscalc = "(o => o === 'linux'?'unix':o==='win32'?'windows':o)"
-    sysos <- addConstToPreamble "sysos" (oscalc ++ "(" ++ os ++ ".platform())")
+    sysos <- addConstToPreamble "sysos" (oscalc ++ "(require('os').platform())")
     pure sysos
+jsPrim (NS _ (UN "void")) [_, _] = jsCrashExp $ jsString $ "Error: Executed 'void'"  -- DEPRECATED. TODO: remove when bootstrap has been updated
+jsPrim (NS _ (UN "prim__void")) [_, _] = jsCrashExp $ jsString $ "Error: Executed 'void'"
 jsPrim x args = throw $ InternalError $ "prim not implemented: " ++ (show x)
 
 tag2es : Either Int String -> String
