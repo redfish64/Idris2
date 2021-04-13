@@ -60,6 +60,7 @@ Show BuildMod where
 data AllMods : Type where
 
 mkModTree : {auto c : Ref Ctxt Defs} ->
+            {auto o : Ref ROpts REPLOpts} ->
             {auto a : Ref AllMods (List (ModuleIdent, ModTree))} ->
             FC ->
             (done : List ModuleIdent) -> -- if 'mod' is here we have a cycle
@@ -89,6 +90,7 @@ mkModTree loc done modFP mod
                 (\err =>
                     case err of
                          CyclicImports _ => throw err
+                         ParseFail _ _ => throw err
                          _ => pure (MkModTree mod Nothing []))
 
 data DoneMod : Type where
@@ -184,7 +186,7 @@ buildMod loc num len mod
                                <++> pretty "Building" <++> pretty mod.buildNS <++> parens (pretty src)
                    [] <- process {u} {m} msg src
                       | errs => do emitWarnings
-                                   traverse emitError errs
+                                   traverse_ emitError errs
                                    pure (ferrs ++ errs)
                    emitWarnings
                    traverse_ emitError ferrs

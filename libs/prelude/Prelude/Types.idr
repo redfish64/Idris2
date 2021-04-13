@@ -104,8 +104,31 @@ Bifunctor Pair where
 
 %inline
 public export
+Bifoldable Pair where
+  bifoldr f g acc (x, y) = f x (g y acc)
+  bifoldl f g acc (x, y) = g (f acc x) y
+  binull _ = False
+
+%inline
+public export
+Bitraversable Pair where
+  bitraverse f g (a,b) = [| (,) (f a) (g b) |]
+
+%inline
+public export
 Functor (Pair a) where
   map = mapSnd
+
+%inline
+public export
+Monoid a => Applicative (Pair a) where
+  pure = (neutral,)
+  (a1,f) <*> (a2,v) = (a1 <+> a2, f v)
+
+%inline
+public export
+Monoid a => Monad (Pair a) where
+  (a1,a) >>= f = let (a2,b) = f a in (a1 <+> a2, b)
 
 -----------
 -- MAYBE --
@@ -263,6 +286,23 @@ Bifunctor Either where
 
 %inline
 public export
+Bifoldable Either where
+  bifoldr f _ acc (Left a)  = f a acc
+  bifoldr _ g acc (Right b) = g b acc
+
+  bifoldl f _ acc (Left a)  = f acc a
+  bifoldl _ g acc (Right b) = g acc b
+
+  binull _ = False
+
+%inline
+public export
+Bitraversable Either where
+  bitraverse f _ (Left a)  = Left <$> f a
+  bitraverse _ g (Right b) = Right <$> g b
+
+%inline
+public export
 Applicative (Either e) where
   pure = Right
 
@@ -361,7 +401,7 @@ Applicative List where
 public export
 Alternative List where
   empty = []
-  (<|>) = (++)
+  xs <|> ys = xs ++ ys
 
 public export
 Monad List where
@@ -377,6 +417,13 @@ public export
 elem : Eq a => a -> List a -> Bool
 x `elem` [] = False
 x `elem` (y :: ys) = x == y ||  elem x ys
+
+||| Lookup a value at a given position
+export
+getAt : Nat -> List a -> Maybe a
+getAt Z     (x :: xs) = Just x
+getAt (S k) (x :: xs) = getAt k xs
+getAt _     []        = Nothing
 
 -------------
 -- STREAMS --
@@ -682,12 +729,15 @@ ceiling x = prim__doubleCeiling x
 -- RANGES --
 ------------
 
-public export
+-- These functions are here to support the range syntax:
+-- range expressions like `[a..b]` are desugared to `rangeFromXXX` calls.
+-- They are not exported, but similar functions are exported from
+-- `Data.Stream` instead.
+
+total
 countFrom : n -> (n -> n) -> Stream n
 countFrom start diff = start :: countFrom (diff start) diff
 
--- this and takeBefore are for range syntax, and not exported here since
--- they're partial. They are exported from Data.Stream instead.
 partial
 takeUntil : (n -> Bool) -> Stream n -> List n
 takeUntil p (x :: xs)

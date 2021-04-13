@@ -2,12 +2,10 @@ Idris 2
 =======
 
 [![Documentation Status](https://readthedocs.org/projects/idris2/badge/?version=latest)](https://idris2.readthedocs.io/en/latest/?badge=latest)
-[![](https://github.com/idris-lang/Idris2/workflows/Windows/badge.svg)](https://github.com/idris-lang/Idris2/actions?query=workflow%3A"Windows")
-[![](https://github.com/idris-lang/Idris2/workflows/Ubuntu/badge.svg)](https://github.com/idris-lang/Idris2/actions?query=workflow%3A"Ubuntu")
-[![](https://github.com/idris-lang/Idris2/workflows/Ubuntu%20Racket/badge.svg)](https://github.com/idris-lang/Idris2/actions?query=workflow%3A"Ubuntu+Racket")
-[![](https://github.com/idris-lang/Idris2/workflows/macOS/badge.svg)](https://github.com/idris-lang/Idris2/actions?query=workflow%3A"macOS")
-[![](https://github.com/idris-lang/Idris2/workflows/API/badge.svg)](https://github.com/idris-lang/Idris2/actions?query=workflow%3A"API")
-[![](https://github.com/idris-lang/Idris2/workflows/Nix/badge.svg)](https://github.com/idris-lang/Idris2/actions?query=workflow%3A"Nix")
+[![Windows Status](https://github.com/idris-lang/Idris2/actions/workflows/ci-windows.yml/badge.svg)](https://github.com/idris-lang/Idris2/actions/workflows/ci-windows.yml)
+[![Ubuntu Status](https://github.com/idris-lang/Idris2/actions/workflows/ci-ubuntu-combined.yml/badge.svg)](https://github.com/idris-lang/Idris2/actions/workflows/ci-ubuntu-combined.yml)
+[![MacOS Status](https://github.com/idris-lang/Idris2/actions/workflows/ci-macos-combined.yml/badge.svg)](https://github.com/idris-lang/Idris2/actions/workflows/ci-macos-combined.yml)
+[![Nix Status](https://github.com/idris-lang/Idris2/actions/workflows/ci-nix.yml/badge.svg)](https://github.com/idris-lang/Idris2/actions/workflows/ci-nix.yml)
 
 [Idris 2](https://idris-lang.org/) is a purely functional programming language
 with first class types.
@@ -85,11 +83,16 @@ separated from the high level language which means it is potentially usable
 as a core language for other high level syntaxes.
 
 Javascript
-====================
+----------
 The javascript codegen uses the new BigInt, hence nodejs 10.4 or higher is required.
 
+Editor Plugins
+--------------
+The [wiki](https://github.com/idris-lang/Idris2/wiki/The-Idris-editor-experience)
+lists the current plugins available for common text editors and their features.
+
 Things still missing
-====================
+--------------------
 
 + Disambiguation via 'with'
 + Cumulativity (so we currently have Type : Type! Bear that in mind when you
@@ -101,7 +104,7 @@ Things still missing
 + Metaprogramming (reflection, partial evaluation)
 
 Talks
-=====
+-----
 
 [![Edwin Brady Tells Us What's New in Idris 2 (Berlin Functional Programming Group)](https://img.youtube.com/vi/nbClauMCeds/0.jpg)](https://www.youtube.com/watch?v=nbClauMCeds "Edwin Brady Tells Us What's New in Idris 2 (Berlin Functional Programming Group)")
 

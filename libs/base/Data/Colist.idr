@@ -2,6 +2,7 @@ module Data.Colist
 
 import Data.Maybe
 import Data.List
+import Data.List1
 import public Data.Zippable
 
 %default total
@@ -105,6 +106,12 @@ public export
 appendl : Colist a -> List a -> Colist a
 appendl xs = append xs . fromList
 
+||| Try to extract the head and tail of a `Colist`.
+public export
+uncons : Colist a -> Maybe (a, Colist a)
+uncons [] = Nothing
+uncons (x :: xs) = Just (x, xs)
+
 ||| Try to extract the first element from a `Colist`.
 public export
 head : Colist a -> Maybe a
@@ -176,6 +183,43 @@ public export
 scanl : (f : a -> b -> a) -> (acc : a) -> (xs : Colist b) -> Colist a
 scanl _ acc Nil       = [acc]
 scanl f acc (x :: xs) = acc :: scanl f (f acc x) xs
+
+--------------------------------------------------------------------------------
+-- InBounds and inBounds for Colists
+--------------------------------------------------------------------------------
+
+||| Satisfiable if `k` is a valid index into `xs`
+|||
+||| @ k the potential index
+||| @ xs the Colist into which k may be an index
+public export
+data InBounds : (k : Nat) -> (xs : Colist a) -> Type where
+    ||| Z is a valid index into any cons cell
+    InFirst : {0 xs : Inf (Colist a)} -> InBounds Z (x :: xs)
+    ||| Valid indices can be extended
+    InLater : {0 xs : Inf (Colist a)} -> InBounds k xs -> InBounds (S k) (x :: xs)
+
+public export
+Uninhabited (Data.Colist.InBounds k []) where
+  uninhabited InFirst impossible
+  uninhabited (InLater _) impossible
+
+||| Decide whether `k` is a valid index into Colist `xs`
+public export
+inBounds : (k : Nat) -> (xs : Colist a) -> Dec (InBounds k xs)
+inBounds k [] = No uninhabited
+inBounds Z (x::xs) = Yes InFirst
+inBounds (S k) (x::xs) = case inBounds k xs of
+  Yes p => Yes $ InLater p
+  No up => No \(InLater p) => up p
+
+||| Find a particular element of a Colist using InBounds
+|||
+||| @ ok a proof that the index is within bounds
+public export
+index' : (k : Nat) -> (xs : Colist a) -> {auto 0 ok : InBounds k xs} -> a
+index' Z (x::_) {ok = InFirst} = x
+index' (S k) (_::xs) {ok = InLater _} = index' k xs
 
 --------------------------------------------------------------------------------
 --          Implementations

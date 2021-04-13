@@ -87,11 +87,11 @@ mutual
                 else do scty <- updateHoleType useInHole var zs sc as
                         pure (Bind bfc nm (Pi fc' c e ty) scty)
   updateHoleType useInHole var zs (Bind bfc nm (Pi fc' c e ty) sc) (a :: as)
-      = do updateHoleUsage False var zs a
+      = do ignore $ updateHoleUsage False var zs a
            scty <- updateHoleType useInHole var zs sc as
            pure (Bind bfc nm (Pi fc' c e ty) scty)
   updateHoleType useInHole var zs ty as
-      = do updateHoleUsageArgs False var zs as
+      = do ignore $ updateHoleUsageArgs False var zs as
            pure ty
 
   updateHoleUsagePats : {auto c : Ref Ctxt Defs} ->
@@ -214,7 +214,7 @@ mutual
   lcheck {vars} rig erase env (Meta fc n idx args)
       = do defs <- get Ctxt
            Just gdef <- lookupCtxtExact (Resolved idx) (gamma defs)
-                | _ => throw (UndefinedName fc n)
+                | _ => undefinedName fc n
            let expand = branchZero
                           (case type gdef of
                                 Erased _ _ => True -- defined elsewhere, need to expand
@@ -287,7 +287,11 @@ mutual
     where
       rig : RigCount
       rig = case b of
-                 Pi _ _ _ _ => erased
+                 Pi _ _ _ _ =>
+                      if isErased rig_in
+                         then erased
+                         else top -- checking as if an inspectable run-time type
+                 Let _ _ _ _ => rig_in
                  _ => if isErased rig_in
                          then erased
                          else linear
@@ -341,7 +345,7 @@ mutual
                             fused ++ aused)
                 NApp _ (NRef _ n) _ =>
                       do Just _ <- lookupCtxtExact n (gamma defs)
-                              | _ => throw (UndefinedName fc n)
+                              | _ => undefinedName fc n
                          tfty <- getTerm gfty
                          throw (GenericMsg fc ("Linearity checking failed on " ++ show f' ++
                               " (" ++ show tfty ++ " not a function type)"))
@@ -391,7 +395,7 @@ mutual
            (valv, valt, vs) <- lcheck (rig |*| rigc) erase env val
            pure (Let fc rigc valv tyv, tyt, vs)
   lcheckBinder rig erase env (Pi fc c x ty)
-      = do (tyv, tyt, _) <- lcheck erased erase env ty
+      = do (tyv, tyt, _) <- lcheck (rig |*| c) erase env ty
            pure (Pi fc c x tyv, tyt, [])
   lcheckBinder rig erase env (PVar fc c p ty)
       = do (tyv, tyt, _) <- lcheck erased erase env ty
@@ -581,14 +585,14 @@ mutual
   lcheckDef fc rig True env n
       = do defs <- get Ctxt
            Just def <- lookupCtxtExact n (gamma defs)
-                | Nothing => throw (UndefinedName fc n)
+                | Nothing => undefinedName fc n
            pure (type def)
   lcheckDef fc rig False env n
       = do defs <- get Ctxt
            let Just idx = getNameID n (gamma defs)
-                | Nothing => throw (UndefinedName fc n)
+                | Nothing => undefinedName fc n
            Just def <- lookupCtxtExact (Resolved idx) (gamma defs)
-                | Nothing => throw (UndefinedName fc n)
+                | Nothing => undefinedName fc n
            rigSafe (multiplicity def) rig
            if linearChecked def
               then pure (type def)
@@ -667,9 +671,9 @@ mutual
       = do defs <- get Ctxt
            empty <- clearDefs defs
            ty <- quote empty env nty
-           throw (GenericMsg fc ("Linearity checking failed on metavar
-                      " ++ show n ++ " (" ++ show ty ++
-                      " not a function type)"))
+           throw (GenericMsg fc ("Linearity checking failed on metavar "
+                      ++ show n ++ " (" ++ show ty
+                      ++ " not a function type)"))
   lcheckMeta rig erase env fc n idx [] chk nty
       = do defs <- get Ctxt
            pure (Meta fc n idx (reverse chk), glueBack defs env nty, [])

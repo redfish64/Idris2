@@ -1,5 +1,6 @@
 module Data.Fin
 
+import Data.List1
 import public Data.Maybe
 import Data.Nat
 import Decidable.Equality.Core
@@ -112,6 +113,12 @@ last : {n : _} -> Fin (S n)
 last {n=Z} = FZ
 last {n=S _} = FS last
 
+||| All of the Fin elements
+public export
+allFins : (n : Nat) -> List1 (Fin (S n))
+allFins Z = FZ ::: []
+allFins (S n) = FZ ::: map FS (forget (allFins n))
+
 export
 Ord (Fin n) where
   compare  FZ     FZ    = EQ
@@ -160,7 +167,7 @@ restrict n val = let val' = assert_total (abs (mod val (cast (S n)))) in
 -- DecEq
 --------------------------------------------------------------------------------
 
-export
+public export
 DecEq (Fin n) where
   decEq FZ FZ = Yes Refl
   decEq FZ (FS f) = No absurd

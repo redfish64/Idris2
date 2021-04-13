@@ -1,6 +1,7 @@
 module Core.Directory
 
 import Core.Context
+import Core.Context.Log
 import Core.Core
 import Core.FC
 import Core.Name
@@ -18,24 +19,34 @@ import System.Info
 %default total
 
 -- Return the name of the first file available in the list
-firstAvailable : List String -> Core (Maybe String)
+firstAvailable : {auto c : Ref Ctxt Defs} ->
+                 List String -> Core (Maybe String)
 firstAvailable [] = pure Nothing
 firstAvailable (f :: fs)
-    = do Right ok <- coreLift $ openFile f Read
+    = do log "import.file" 30 $ "Attempting to read " ++ f
+         Right ok <- coreLift $ openFile f Read
                | Left err => firstAvailable fs
          coreLift $ closeFile ok
          pure (Just f)
 
 export
 covering
-readDataFile : {auto c : Ref Ctxt Defs} ->
+findDataFile : {auto c : Ref Ctxt Defs} ->
                String -> Core String
-readDataFile fname
+findDataFile fname
     = do d <- getDirs
          let fs = map (\p => p </> fname) (data_dirs d)
          Just f <- firstAvailable fs
             | Nothing => throw (InternalError ("Can't find data file " ++ fname ++
                                                " in any of " ++ show fs))
+         pure f
+
+export
+covering
+readDataFile : {auto c : Ref Ctxt Defs} ->
+               String -> Core String
+readDataFile fname
+    = do f <- findDataFile fname
          Right d <- coreLift $ readFile f
             | Left err => throw (FileErr f err)
          pure d

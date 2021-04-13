@@ -54,11 +54,13 @@ import TTImp.BindImplicits
 import TTImp.ProcessDecls
 
 import Data.List
+import Data.List1
 import Data.Maybe
 import Libraries.Data.ANameMap
 import Libraries.Data.NameMap
 import Data.Stream
 import Data.Strings
+import Libraries.Data.String.Extra
 import Libraries.Text.PrettyPrint.Prettyprinter
 import Libraries.Text.PrettyPrint.Prettyprinter.Util
 import Libraries.Text.PrettyPrint.Prettyprinter.Render.Terminal
@@ -66,30 +68,34 @@ import Libraries.Text.PrettyPrint.Prettyprinter.Render.Terminal
 import System
 import System.File
 
+%hide Data.Strings.lines
+%hide Data.Strings.lines'
+%hide Data.Strings.unlines
+%hide Data.Strings.unlines'
+
 %default covering
 
 showInfo : {auto c : Ref Ctxt Defs} ->
            (Name, Int, GlobalDef) -> Core ()
 showInfo (n, idx, d)
-    = do coreLift $ putStrLn (show (fullname d) ++ " ==> " ++
+    = do coreLift_ $ putStrLn (show (fullname d) ++ " ==> " ++
                               show !(toFullNames (definition d)))
-         coreLift $ putStrLn (show (multiplicity d))
-         coreLift $ putStrLn ("Erasable args: " ++ show (eraseArgs d))
-         coreLift $ putStrLn ("Detaggable arg types: " ++ show (safeErase d))
-         coreLift $ putStrLn ("Specialise args: " ++ show (specArgs d))
-         coreLift $ putStrLn ("Inferrable args: " ++ show (inferrable d))
-         case compexpr d of
-              Nothing => pure ()
-              Just expr => coreLift $ putStrLn ("Compiled: " ++ show expr)
-         coreLift $ putStrLn ("Refers to: " ++
+         coreLift_ $ putStrLn (show (multiplicity d))
+         coreLift_ $ putStrLn ("Erasable args: " ++ show (eraseArgs d))
+         coreLift_ $ putStrLn ("Detaggable arg types: " ++ show (safeErase d))
+         coreLift_ $ putStrLn ("Specialise args: " ++ show (specArgs d))
+         coreLift_ $ putStrLn ("Inferrable args: " ++ show (inferrable d))
+         whenJust (compexpr d) $ \ expr =>
+           coreLift_ $ putStrLn ("Compiled: " ++ show expr)
+         coreLift_ $ putStrLn ("Refers to: " ++
                                show !(traverse getFullName (keys (refersTo d))))
-         coreLift $ putStrLn ("Refers to (runtime): " ++
+         coreLift_ $ putStrLn ("Refers to (runtime): " ++
                                show !(traverse getFullName (keys (refersToRuntime d))))
-         coreLift $ putStrLn ("Flags: " ++ show (flags d))
+         coreLift_ $ putStrLn ("Flags: " ++ show (flags d))
          when (not (isNil (sizeChange d))) $
             let scinfo = map (\s => show (fnCall s) ++ ": " ++
                                     show (fnArgs s)) !(traverse toFullNames (sizeChange d)) in
-                coreLift $ putStrLn $
+                coreLift_ $ putStrLn $
                         "Size change: " ++ showSep ", " scinfo
 
 displayType : {auto c : Ref Ctxt Defs} ->
@@ -197,7 +203,7 @@ findCG
               RefC => pure codegenRefC
               Other s => case !(getCodegen s) of
                             Just cg => pure cg
-                            Nothing => do coreLift $ putStrLn ("No such code generator: " ++ s)
+                            Nothing => do coreLift_ $ putStrLn ("No such code generator: " ++ s)
                                           coreLift $ exitWith (ExitFailure 1)
 
 anyAt : (a -> Bool) -> a -> b -> Bool
@@ -211,12 +217,16 @@ printClause l i (PatClause _ lhsraw rhsraw)
     = do lhs <- pterm lhsraw
          rhs <- pterm rhsraw
          pure (relit l (pack (replicate i ' ') ++ show lhs ++ " = " ++ show rhs))
-printClause l i (WithClause _ lhsraw wvraw flags csraw)
+printClause l i (WithClause _ lhsraw wvraw prf flags csraw)
     = do lhs <- pterm lhsraw
          wval <- pterm wvraw
          cs <- traverse (printClause l (i + 2)) csraw
-         pure ((relit l ((pack (replicate i ' ') ++ show lhs ++ " with (" ++ show wval ++ ")\n")) ++
-                 showSep "\n" cs))
+         pure (relit l ((pack (replicate i ' ')
+                ++ show lhs
+                ++ " with (" ++ show wval ++ ")"
+                ++ maybe "" (\ nm => " proof " ++ show nm) prf
+                ++ "\n"))
+               ++ showSep "\n" cs)
 printClause l i (ImpossibleClause _ lhsraw)
     = do lhs <- pterm lhsraw
          pure (relit l (pack (replicate i ' ') ++ show lhs ++ " impossible"))
@@ -242,8 +252,8 @@ updateFile update
              | Nothing => pure (DisplayEdit emptyDoc) -- no file, nothing to do
          Right content <- coreLift $ readFile f
                | Left err => throw (FileErr f err)
-         coreLift $ writeFile (f ++ "~") content
-         coreLift $ writeFile f (unlines (update (lines content)))
+         coreLift_ $ writeFile (f ++ "~") content
+         coreLift_ $ writeFile f (unlines (update (forget $ lines content)))
          pure (DisplayEdit emptyDoc)
 
 rtrim : String -> String
@@ -375,7 +385,7 @@ processEdit (TypeAt line col name)
               (_, Just (n, _, type)) => pure $ DisplayEdit $
                 pretty (nameRoot n) <++> colon <++> !(displayTerm defs type)
               (Just globalDoc, Nothing) => pure $ DisplayEdit $ globalDoc
-              (Nothing, Nothing) => throw (UndefinedName replFC name)
+              (Nothing, Nothing) => undefinedName replFC name
 
 processEdit (CaseSplit upd line col name)
     = do let find = if col > 0
@@ -499,7 +509,7 @@ processEdit (MakeCase upd line name)
          let Right l = unlit litStyle src
               | Left err => pure (EditError "Invalid literate Idris")
          let (markM, _) = isLitLine src
-         let c = lines $ makeCase brack name l
+         let c = forget $ lines $ makeCase brack name l
          if upd
             then updateFile (addMadeCase markM c (max 0 (integerToNat (cast (line - 1)))))
             else pure $ MadeCase markM c
@@ -510,7 +520,7 @@ processEdit (MakeWith upd line name)
          let Right l = unlit litStyle src
               | Left err => pure (EditError "Invalid literate Idris")
          let (markM, _) = isLitLine src
-         let w = lines $ makeWith name l
+         let w = forget $ lines $ makeWith name l
          if upd
             then updateFile (addMadeCase markM w (max 0 (integerToNat (cast (line - 1)))))
             else pure $ MadeWith markM w
@@ -617,7 +627,7 @@ execDecls decls = do
     execDecl decl = do
       i <- desugarDecl [] decl
       inidx <- resolveName (UN "[defs]")
-      newRef EST (initEStateSub inidx [] SubRefl)
+      _ <- newRef EST (initEStateSub inidx [] SubRefl)
       processLocal [] (MkNested []) [] !getItDecls i
 
 export
@@ -663,11 +673,11 @@ docsOrSignature fc n
     = do syn  <- get Syn
          defs <- get Ctxt
          all@(_ :: _) <- lookupCtxtName n (gamma defs)
-             | _ => throw (UndefinedName fc n)
+             | _ => undefinedName fc n
          let ns@(_ :: _) = concatMap (\n => lookupName n (docstrings syn))
                                      (map fst all)
              | [] => typeSummary defs
-         getDocsFor fc n
+         getDocsForName fc n
   where
     typeSummary : Defs -> Core (List String)
     typeSummary defs = do Just def <- lookupCtxtExact n (gamma defs)
@@ -679,15 +689,22 @@ equivTypes : {auto c : Ref Ctxt Defs} ->
              (ty1 : ClosedTerm) ->
              (ty2 : ClosedTerm) ->
              Core Bool
-equivTypes ty1 ty2 = do defs <- get Ctxt
-                        True <- pure (!(getArity defs [] ty1) == !(getArity defs [] ty2))
-                          | False => pure False
-                        newRef UST initUState
-                        catch (do res <- unify inTerm replFC [] ty1 ty2
-                                  case res of
-                                       (MkUnifyResult _ _ _ NoLazy) => pure True
-                                       _ => pure False)
-                              (\err => pure False)
+equivTypes ty1 ty2 =
+  do let False = isErased ty1
+          | _ => pure False
+     logTerm "typesearch.equiv" 10 "Candidate: " ty1
+     defs <- get Ctxt
+     True <- pure (!(getArity defs [] ty1) == !(getArity defs [] ty2))
+       | False => pure False
+     _ <- newRef UST initUState
+     b <- catch
+           (do res <- unify inTerm replFC [] ty1 ty2
+               case res of
+                 (MkUnifyResult [] _ [] NoLazy) => pure True
+                 _ => pure False)
+           (\err => pure False)
+     when b $ logTerm "typesearch.equiv" 20 "Accepted: " ty1
+     pure b
 
 ||| Process a single `REPLCmd`
 |||
@@ -704,7 +721,7 @@ process (NewDefn decls) = execDecls decls
 process (Eval itm)
     = do opts <- get ROpts
          case evalMode opts of
-            Execute => do execExp itm; pure (Executed itm)
+            Execute => do ignore (execExp itm); pure (Executed itm)
             _ =>
               do ttimp <- desugar AnyExpr [] itm
                  let ttimpWithIt = ILocal replFC !getItDecls ttimp
@@ -727,7 +744,9 @@ process (Eval itm)
                  itm <- resugar [] ntm
                  ty <- getTerm gty
                  evalResultName <- DN "it" <$> genName "evalResult"
-                 addDef evalResultName (newDef replFC evalResultName top [] ty Private (PMDef defaultPI [] (STerm 0 ntm) (STerm 0 ntm) []))
+                 ignore $ addDef evalResultName
+                   $ newDef replFC evalResultName top [] ty Private
+                   $ PMDef defaultPI [] (STerm 0 ntm) (STerm 0 ntm) []
                  addToSave evalResultName
                  put ROpts (record { evalResultName = Just evalResultName } opts)
                  if showTypes opts
@@ -751,7 +770,7 @@ process (Check (PRef fc (UN "it")))
 process (Check (PRef fc fn))
     = do defs <- get Ctxt
          case !(lookupCtxtName fn (gamma defs)) of
-              [] => throw (UndefinedName fc fn)
+              [] => undefinedName fc fn
               ts => do tys <- traverse (displayType defs) ts
                        pure (Printed $ vsep tys)
 process (Check itm)
@@ -768,7 +787,7 @@ process (Check itm)
 process (PrintDef fn)
     = do defs <- get Ctxt
          case !(lookupCtxtName fn (gamma defs)) of
-              [] => throw (UndefinedName replFC fn)
+              [] => undefinedName replFC fn
               ts => do defs <- traverse (displayPats defs) ts
                        pure (Printed $ vsep defs)
 process Reload
@@ -798,7 +817,7 @@ process Edit
               Nothing => pure NoFileLoaded
               Just f =>
                 do let line = maybe "" (\i => " +" ++ show (i + 1)) (errorLine opts)
-                   coreLift $ system (editor opts ++ " \"" ++ f ++ "\"" ++ line)
+                   coreLift_ $ system (editor opts ++ " \"" ++ f ++ "\"" ++ line)
                    loadMainFile f
 process (Compile ctm outfile)
     = compileExp ctm outfile
@@ -806,27 +825,30 @@ process (Exec ctm)
     = execExp ctm
 process Help
     = pure RequestedHelp
-process (TypeSearch searchTerm@(PPi _ _ _ _ _ _))
+process (TypeSearch searchTerm)
     = do defs <- branch
+         let curr = currentNS defs
          let ctxt = gamma defs
          rawTy <- desugar AnyExpr [] searchTerm
          let bound = piBindNames replFC [] rawTy
          (ty, _) <- elabTerm 0 InType [] (MkNested []) [] bound Nothing
          ty' <- toResolvedNames ty
-         filteredDefs <- do names   <- allNames ctxt
-                            defs    <- catMaybes <$> (traverse (flip lookupCtxtExact ctxt) names)
-                            allDefs <- traverse (resolved ctxt) defs
-                            (flip filterM) allDefs (\def => equivTypes def.type ty')
-
+         filteredDefs <-
+           do names   <- allNames ctxt
+              defs    <- traverse (flip lookupCtxtExact ctxt) names
+              let defs = flip mapMaybe defs $ \ md =>
+                             do d <- md
+                                guard (visibleIn curr (fullname d) (visibility d))
+                                pure d
+              allDefs <- traverse (resolved ctxt) defs
+              filterM (\def => equivTypes def.type ty') allDefs
          put Ctxt defs
          doc <- traverse (docsOrSignature replFC) $ (.fullname) <$> filteredDefs
          pure $ Printed $ vsep $ pretty <$> (intersperse "\n" $ join doc)
-process (TypeSearch _)
-    = pure $ REPLError $ reflow "Could not parse input as a type signature."
 process (Missing n)
     = do defs <- get Ctxt
          case !(lookupCtxtName n (gamma defs)) of
-              [] => throw (UndefinedName replFC n)
+              [] => undefinedName replFC n
               ts => map Missed $ traverse (\fn =>
                                          do tot <- getTotality replFC fn
                                             the (Core MissedResult) $ case isCovering tot of
@@ -841,15 +863,15 @@ process (Missing n)
 process (Total n)
     = do defs <- get Ctxt
          case !(lookupCtxtName n (gamma defs)) of
-              [] => throw (UndefinedName replFC n)
+              [] => undefinedName replFC n
               ts => map CheckedTotal $
                     traverse (\fn =>
-                          do checkTotal replFC fn
+                          do ignore $ checkTotal replFC fn
                              tot <- getTotality replFC fn >>= toFullNames
                              pure $ (fn, tot))
                                (map fst ts)
-process (Doc n)
-    = do doc <- getDocsFor replFC n
+process (Doc itm)
+    = do doc <- getDocsForPTerm itm
          pure $ Printed $ vsep $ pretty <$> doc
 process (Browse ns)
     = do doc <- getContents ns
@@ -902,7 +924,7 @@ process (CGDirective str)
     = do setSession (record { directives $= (str::) } !getSession)
          pure Done
 process (RunShellCommand cmd)
-    = do coreLift (system cmd)
+    = do coreLift_ (system cmd)
          pure Done
 process Quit
     = pure Exited
@@ -940,9 +962,9 @@ parseCmd : SourceEmptyRule (Maybe REPLCmd)
 parseCmd = do c <- command; eoi; pure $ Just c
 
 export
-parseRepl : String -> Either (ParseError Token) (Maybe REPLCmd)
+parseRepl : String -> Either Error (Maybe REPLCmd)
 parseRepl inp
-    = runParser Nothing inp (parseEmptyCmd <|> parseCmd)
+    = runParser "(interactive)" Nothing inp (parseEmptyCmd <|> parseCmd)
 
 export
 interpret : {auto c : Ref Ctxt Defs} ->
@@ -952,12 +974,11 @@ interpret : {auto c : Ref Ctxt Defs} ->
             {auto o : Ref ROpts REPLOpts} ->
             String -> Core REPLResult
 interpret inp
-    = case parseRepl inp of
-           Left err => pure $ REPLError (pretty err)
+    = do setCurrentElabSource inp
+         case parseRepl inp of
+           Left err => pure $ REPLError !(perror err)
            Right Nothing => pure Done
-           Right (Just cmd) => do
-             setCurrentElabSource inp
-             processCatch cmd
+           Right (Just cmd) => processCatch cmd
 
 mutual
   export
@@ -982,13 +1003,14 @@ mutual
   repl
       = do ns <- getNS
            opts <- get ROpts
-           coreLift (putStr (prompt (evalMode opts) ++ show ns ++ "> "))
+           coreLift_ (putStr (prompt (evalMode opts) ++ show ns ++ "> "))
+           coreLift_ (fflush stdout)
            inp <- coreLift getLine
            end <- coreLift $ fEOF stdin
            if end
              then do
                -- start a new line in REPL mode (not relevant in IDE mode)
-               coreLift $ putStrLn ""
+               coreLift_ $ putStrLn ""
                iputStrLn $ pretty "Bye for now!"
               else do res <- interpret inp
                       handleResult res
@@ -1044,7 +1066,7 @@ mutual
   displayResult (ErrorLoadingFile x err) = printResult (reflow "Error loading file" <++> pretty x <+> colon <++> pretty (show err))
   displayResult (ErrorsBuildingFile x errs) = printResult (reflow "Error(s) building file" <++> pretty x) -- messages already displayed while building
   displayResult NoFileLoaded = printError (reflow "No file can be reloaded")
-  displayResult (CurrentDirectory dir) = printResult (reflow "Current working directory is" <++> squotes (pretty dir))
+  displayResult (CurrentDirectory dir) = printResult (reflow "Current working directory is" <++> dquotes (pretty dir))
   displayResult CompilationFailed = printError (reflow "Compilation failed")
   displayResult (Compiled f) = printResult (pretty "File" <++> pretty f <++> pretty "written")
   displayResult (ProofFound x) = printResult (prettyTerm x)

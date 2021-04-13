@@ -23,6 +23,7 @@ collectDefs : List ImpDecl -> List ImpDecl
 %default covering
 
 %hide Prelude.(>>=)
+%hide Prelude.(>>)
 %hide Core.Core.(>>=)
 %hide Prelude.pure
 %hide Core.Core.pure
@@ -36,6 +37,10 @@ atom fname
          x <- constant
          end <- location
          pure (IPrimVal (MkFC fname start end) x)
+  <|> do start <- location
+         str <- simpleStr
+         end <- location
+         pure (IPrimVal (MkFC fname start end) (Str str))
   <|> do start <- location
          exactIdent "Type"
          end <- location
@@ -119,7 +124,7 @@ visOpt
          pure (Right opt)
 
 getVisibility : Maybe Visibility -> List (Either Visibility FnOpt) ->
-               SourceEmptyRule Visibility
+                SourceEmptyRule Visibility
 getVisibility Nothing [] = pure Private
 getVisibility (Just vis) [] = pure vis
 getVisibility Nothing (Left x :: xs) = getVisibility (Just x) xs
@@ -232,16 +237,16 @@ mutual
   bindList : FileName -> FilePos -> IndentInfo ->
              Rule (List (RigCount, Name, RawImp))
   bindList fname start indents
-      = sepBy1 (symbol ",")
-               (do rigc <- multiplicity
-                   n <- unqualifiedName
-                   end <- location
-                   ty <- option
-                            (Implicit (MkFC fname start end) False)
-                            (do symbol ":"
-                                appExpr fname indents)
-                   rig <- getMult rigc
-                   pure (rig, UN n, ty))
+      = forget <$> sepBy1 (symbol ",")
+                          (do rigc <- multiplicity
+                              n <- unqualifiedName
+                              end <- location
+                              ty <- option
+                                       (Implicit (MkFC fname start end) False)
+                                       (do symbol ":"
+                                           appExpr fname indents)
+                              rig <- getMult rigc
+                              pure (rig, UN n, ty))
 
 
   pibindListName : FileName -> FilePos -> IndentInfo ->
@@ -253,14 +258,14 @@ mutual
             ty <- expr fname indents
             atEnd indents
             rig <- getMult rigc
-            pure (map (\n => (rig, UN n, ty)) ns)
-     <|> sepBy1 (symbol ",")
-                (do rigc <- multiplicity
-                    n <- name
-                    symbol ":"
-                    ty <- expr fname indents
-                    rig <- getMult rigc
-                    pure (rig, n, ty))
+            pure (map (\n => (rig, UN n, ty)) (forget ns))
+     <|> forget <$> sepBy1 (symbol ",")
+                           (do rigc <- multiplicity
+                               n <- name
+                               symbol ":"
+                               ty <- expr fname indents
+                               rig <- getMult rigc
+                               pure (rig, n, ty))
 
   pibindList : FileName -> FilePos -> IndentInfo ->
                Rule (List (RigCount, Maybe Name, RawImp))
@@ -291,7 +296,7 @@ mutual
            ns <- sepBy1 (symbol ",") unqualifiedName
            nend <- location
            let nfc = MkFC fname nstart nend
-           let binders = map (\n => (erased {a=RigCount}, Just (UN n), Implicit nfc False)) ns
+           let binders = map (\n => (erased {a=RigCount}, Just (UN n), Implicit nfc False)) (forget ns)
            symbol "."
            scope <- typeExpr fname indents
            end <- location
@@ -401,7 +406,7 @@ mutual
            symbol "}"
            sc <- expr fname indents
            end <- location
-           pure (IUpdate (MkFC fname start end) fs sc)
+           pure (IUpdate (MkFC fname start end) (forget fs) sc)
 
   field : FileName -> IndentInfo -> Rule IFieldUpdate
   field fname indents
@@ -410,7 +415,7 @@ mutual
                       <|>
                   (do symbol "$="; pure ISetFieldApp)
            val <- appExpr fname indents
-           pure (upd path val)
+           pure (upd (forget path) val)
 
   rewrite_ : FileName -> IndentInfo -> Rule RawImp
   rewrite_ fname indents
@@ -464,7 +469,7 @@ mutual
                                 op <- appExpr fname indents
                                 pure (exp, op))
                end <- location
-               pure (mkPi start end arg rest))
+               pure (mkPi start end arg (forget rest)))
              <|> pure arg
     where
       mkPi : FilePos -> FilePos -> RawImp -> List (PiInfo RawImp, RawImp) -> RawImp
@@ -505,10 +510,11 @@ mutual
            symbol "("
            wval <- expr fname indents
            symbol ")"
+           prf <- optional (keyword "proof" *> name)
            ws <- nonEmptyBlock (clause (S withArgs) fname)
            end <- location
            let fc = MkFC fname start end
-           pure (!(getFn lhs), WithClause fc lhs wval [] (forget $ map snd ws))
+           pure (!(getFn lhs), WithClause fc lhs wval prf [] (forget $ map snd ws))
 
     <|> do keyword "impossible"
            atEnd indents
@@ -558,7 +564,7 @@ dataOpt
   <|> do exactIdent "uniqueSearch"
          pure UniqueSearch
   <|> do exactIdent "search"
-         ns <- some name
+         ns <- forget <$> some name
          pure (SearchBy ns)
 
 dataDecl : FileName -> IndentInfo -> Rule ImpData
@@ -572,7 +578,7 @@ dataDecl fname indents
          opts <- option [] (do symbol "["
                                dopts <- sepBy1 (symbol ",") dataOpt
                                symbol "]"
-                               pure dopts)
+                               pure $ forget dopts)
          cs <- block (tyDecl fname)
          end <- location
          pure (MkImpData (MkFC fname start end) n ty opts cs)
@@ -622,7 +628,7 @@ fieldDecl fname indents
              ty <- expr fname indents
              end <- location
              pure (map (\n => MkIField (MkFC fname start end)
-                                       linear p (UN n) ty) ns)
+                                       linear p (UN n) ty) (forget ns))
 
 recordDecl : FileName -> IndentInfo -> Rule ImpDecl
 recordDecl fname indents
@@ -699,9 +705,11 @@ topDecl fname indents
          visOpts <- many visOpt
          vis <- getVisibility Nothing visOpts
          let opts = mapMaybe getRight visOpts
+         m <- multiplicity
+         rig <- getMult m
          claim <- tyDecl fname indents
          end <- location
-         pure (IClaim (MkFC fname start end) top vis opts claim)
+         pure (IClaim (MkFC fname start end) rig vis opts claim)
   <|> recordDecl fname indents
   <|> directive fname indents
   <|> definition fname indents

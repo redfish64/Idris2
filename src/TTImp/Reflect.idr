@@ -59,6 +59,7 @@ Reify DotReason where
              (NS _ (UN "ErasedArg"), _) => pure ErasedArg
              (NS _ (UN "UserDotted"), _) => pure UserDotted
              (NS _ (UN "UnknownDot"), _) => pure UnknownDot
+             (NS _ (UN "UnderAppliedCon"), _) => pure UnderAppliedCon
              _ => cantReify val "DotReason"
   reify defs val = cantReify val "DotReason"
 
@@ -76,6 +77,9 @@ Reflect DotReason where
       = getCon fc defs (reflectionttimp "UserDotted")
   reflect fc defs lhs env UnknownDot
       = getCon fc defs (reflectionttimp "UnknownDot")
+  reflect fc defs lhs env UnderAppliedCon
+      = getCon fc defs (reflectionttimp "UnderAppliedCon")
+
 
 mutual
   export
@@ -374,12 +378,13 @@ mutual
                           y' <- reify defs !(evalClosure defs y)
                           z' <- reify defs !(evalClosure defs z)
                           pure (PatClause x' y' z')
-               (NS _ (UN "WithClause"), [w,x,y,z])
-                    => do w' <- reify defs !(evalClosure defs w)
+               (NS _ (UN "WithClause"), [v,w,x,y,z])
+                    => do v' <- reify defs !(evalClosure defs v)
+                          w' <- reify defs !(evalClosure defs w)
                           x' <- reify defs !(evalClosure defs x)
                           y' <- reify defs !(evalClosure defs y)
                           z' <- reify defs !(evalClosure defs z)
-                          pure (WithClause w' x' y' [] z')
+                          pure (WithClause v' w' x' y' [] z')
                (NS _ (UN "ImpossibleClause"), [x,y])
                     => do x' <- reify defs !(evalClosure defs x)
                           y' <- reify defs !(evalClosure defs y)
@@ -701,12 +706,13 @@ mutual
              y' <- reflect fc defs lhs env y
              z' <- reflect fc defs lhs env z
              appCon fc defs (reflectionttimp "PatClause") [x', y', z']
-    reflect fc defs lhs env (WithClause v w x y z)
-        = do v' <- reflect fc defs lhs env v
+    reflect fc defs lhs env (WithClause u v w x y z)
+        = do u' <- reflect fc defs lhs env u
+             v' <- reflect fc defs lhs env v
              w' <- reflect fc defs lhs env w
              x' <- reflect fc defs lhs env x
              z' <- reflect fc defs lhs env z
-             appCon fc defs (reflectionttimp "WithClause") [v', w', x', z']
+             appCon fc defs (reflectionttimp "WithClause") [u', v', w', x', z']
     reflect fc defs lhs env (ImpossibleClause x y)
         = do x' <- reflect fc defs lhs env x
              y' <- reflect fc defs lhs env y

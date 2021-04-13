@@ -49,6 +49,14 @@ data L : (io : Type -> Type) ->
             (1 _ : ContType io u_act u_k a b) ->
             L io {use=u_k} b
 
+public export
+L0 : (io : Type -> Type) -> (ty : Type) -> Type
+L0 io ty = L io {use = 0} ty
+
+public export
+L1 : (io : Type -> Type) -> (ty : Type) -> Type
+L1 io ty = L io {use = 1} ty
+
 ContType io None u_k a b = (0 _ : a) -> L io {use=u_k} b
 ContType io Linear u_k a b = (1 _ : a) -> L io {use=u_k} b
 ContType io Unrestricted u_k a b = a -> L io {use=u_k} b
@@ -105,6 +113,20 @@ export %inline
         (1 _ : L io {use=u_act} a) ->
         (1 _ : ContType io u_act u_k a b) -> L io {use=u_k} b
 (>>=) = Bind
+
+export
+delay : {u_act : _} -> (1 _ : L io {use=u_k} b) -> ContType io u_act u_k () b
+delay mb = case u_act of
+  None => \ _ => mb
+  Linear => \ () => mb
+  Unrestricted => \ _ => mb
+
+export %inline
+(>>) : {u_act : _} ->
+        LinearBind io =>
+        (1 _ : L io {use=u_act} ()) ->
+        (1 _ : L io {use=u_k} b) -> L io {use=u_k} b
+ma >> mb = ma >>= delay mb
 
 export %inline
 pure0 : (0 x : a) -> L io {use=0} a

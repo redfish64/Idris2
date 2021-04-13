@@ -1,5 +1,6 @@
 module Compiler.Common
 
+
 import Compiler.ANF
 import Compiler.CompileExpr
 import Compiler.Inline
@@ -13,11 +14,15 @@ import Core.Options
 import Core.TT
 import Core.TTC
 import Libraries.Utils.Binary
+import Libraries.Utils.Path
 
 import Data.IOArray
 import Data.List
+import Data.List1
 import Libraries.Data.NameMap
-import Data.Strings
+import Data.Strings as String
+
+import Idris.Env
 
 import System.Directory
 import System.Info
@@ -141,7 +146,7 @@ getAllDesc (n@(Resolved i) :: rest) arr defs
             Nothing => getAllDesc rest arr defs
             Just (_, entry) =>
               do (def, bin) <- getMinimalDef entry
-                 addDef n def
+                 ignore $ addDef n def
                  let refs = refersToRuntime def
                  if multiplicity def /= erased
                     then do coreLift $ writeArray arr i (i, bin)
@@ -172,8 +177,7 @@ replaceEntry : {auto c : Ref Ctxt Defs} ->
                (Int, Maybe Binary) -> Core ()
 replaceEntry (i, Nothing) = pure ()
 replaceEntry (i, Just b)
-    = do addContextEntry (Resolved i) b
-         pure ()
+    = ignore $ addContextEntry (Resolved i) b
 
 natHackNames : List Name
 natHackNames
@@ -250,9 +254,9 @@ dumpVMCode fn lns
 -- them to CExp form (and update that in the Defs).
 -- Return the names, the type tags, and a compiled version of the expression
 export
-getCompileData : {auto c : Ref Ctxt Defs} ->
+getCompileData : {auto c : Ref Ctxt Defs} -> (doLazyAnnots : Bool) ->
                  UsePhase -> ClosedTerm -> Core CompileData
-getCompileData phase tm_in
+getCompileData doLazyAnnots phase tm_in
     = do defs <- get Ctxt
          sopts <- getSession
          let ns = getRefs (Resolved (-1)) tm_in
@@ -278,11 +282,11 @@ getCompileData phase tm_in
 
          compiledtm <- fixArityExp !(compileExp tm)
          let mainname = MN "__mainExpression" 0
-         (liftedtm, ldefs) <- liftBody mainname compiledtm
+         (liftedtm, ldefs) <- liftBody {doLazyAnnots} mainname compiledtm
 
          namedefs <- traverse getNamedDef rcns
          lifted_in <- if phase >= Lifted
-                         then logTime "Lambda lift" $ traverse lambdaLift rcns
+                         then logTime "Lambda lift" $ traverse (lambdaLift doLazyAnnots) rcns
                          else pure []
 
          let lifted = (mainname, MkLFun [] [] liftedtm) ::
@@ -433,3 +437,15 @@ getExtraRuntime directives
       Right contents <- coreLift $ readFile p
         | Left err => throw (FileErr p err)
       pure contents
+
+||| Looks up an executable from a list of candidate names in the PATH
+export
+pathLookup : List String -> IO (Maybe String)
+pathLookup candidates
+    = do path <- idrisGetEnv "PATH"
+         let extensions = if isWindows then [".exe", ".cmd", ".bat", ""] else [""]
+         let pathList = forget $ String.split (== pathSeparator) $ fromMaybe "/usr/bin:/usr/local/bin" path
+         let candidates = [p ++ "/" ++ x ++ y | p <- pathList,
+                                                x <- candidates,
+                                                y <- extensions ]
+         firstExists candidates

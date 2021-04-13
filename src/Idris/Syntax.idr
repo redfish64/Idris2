@@ -15,6 +15,7 @@ import Libraries.Data.ANameMap
 import Data.List
 import Data.Maybe
 import Libraries.Data.NameMap
+import Libraries.Data.String.Extra
 import Libraries.Data.StringMap
 import Libraries.Text.PrettyPrint.Prettyprinter
 import Libraries.Text.PrettyPrint.Prettyprinter.Util
@@ -80,7 +81,8 @@ mutual
        PBracketed : FC -> PTerm -> PTerm
 
        -- Syntactic sugar
-
+       PString : FC -> List PStr -> PTerm
+       PMultiline : FC -> (indent : Nat) -> List (List PStr) -> PTerm
        PDoBlock : FC -> Maybe Namespace -> List PDo -> PTerm
        PBang : FC -> PTerm -> PTerm
        PIdiom : FC -> PTerm -> PTerm
@@ -141,6 +143,8 @@ mutual
   getPTermLoc (PSectionR fc _ _) = fc
   getPTermLoc (PEq fc _ _) = fc
   getPTermLoc (PBracketed fc _) = fc
+  getPTermLoc (PString fc _) = fc
+  getPTermLoc (PMultiline fc _ _) = fc
   getPTermLoc (PDoBlock fc _ _) = fc
   getPTermLoc (PBang fc _) = fc
   getPTermLoc (PIdiom fc _) = fc
@@ -172,6 +176,11 @@ mutual
        DoLetPat : FC -> PTerm -> PTerm -> PTerm -> List PClause -> PDo
        DoLetLocal : FC -> List PDecl -> PDo
        DoRewrite : FC -> PTerm -> PDo
+
+  public export
+  data PStr : Type where
+       StrLiteral : FC -> String -> PStr
+       StrInterp : FC -> PTerm -> PStr
 
   export
   getLoc : PDo -> FC
@@ -212,14 +221,15 @@ mutual
   data PClause : Type where
        MkPatClause : FC -> (lhs : PTerm) -> (rhs : PTerm) ->
                      (whereblock : List PDecl) -> PClause
-       MkWithClause : FC -> (lhs : PTerm) -> (wval : PTerm) ->
+       MkWithClause : FC -> (lhs : PTerm) ->
+                      (wval : PTerm) -> (prf : Maybe Name) ->
                       List WithFlag -> List PClause -> PClause
        MkImpossible : FC -> (lhs : PTerm) -> PClause
 
   export
   getPClauseLoc : PClause -> FC
   getPClauseLoc (MkPatClause fc _ _ _) = fc
-  getPClauseLoc (MkWithClause fc _ _ _ _) = fc
+  getPClauseLoc (MkWithClause fc _ _ _ _ _) = fc
   getPClauseLoc (MkImpossible fc _) = fc
 
   public export
@@ -234,6 +244,7 @@ mutual
        PrimInteger : Name -> Directive
        PrimString : Name -> Directive
        PrimChar : Name -> Directive
+       PrimDouble : Name -> Directive
        CGAction : String -> String -> Directive
        Names : Name -> List String -> Directive
        StartExpr : PTerm -> Directive
@@ -242,6 +253,7 @@ mutual
        DefaultTotality : TotalReq -> Directive
        PrefixRecordProjections : Bool -> Directive
        AutoImplicitDepth : Nat -> Directive
+       NFMetavarThreshold : Nat -> Directive
 
   public export
   data PField : Type where
@@ -440,7 +452,7 @@ data REPLCmd : Type where
      CWD: REPLCmd
      Missing : Name -> REPLCmd
      Total : Name -> REPLCmd
-     Doc : Name -> REPLCmd
+     Doc : PTerm -> REPLCmd
      Browse : Namespace -> REPLCmd
      SetLog : Maybe LogLevel -> REPLCmd
      SetConsoleWidth : Maybe Nat -> REPLCmd
@@ -472,7 +484,7 @@ record Module where
 mutual
   showAlt : PClause -> String
   showAlt (MkPatClause _ lhs rhs _) = " | " ++ show lhs ++ " => " ++ show rhs ++ ";"
-  showAlt (MkWithClause _ lhs wval flags cs) = " | <<with alts not possible>>;"
+  showAlt (MkWithClause _ lhs wval prf flags cs) = " | <<with alts not possible>>;"
   showAlt (MkImpossible _ lhs) = " | " ++ show lhs ++ " impossible;"
 
   showDo : PDo -> String
@@ -488,6 +500,11 @@ mutual
       = "let { << definitions >>  }"
   showDo (DoRewrite _ rule)
       = "rewrite " ++ show rule
+
+  export
+  Show PStr where
+    show (StrLiteral _ str) = show str
+    show (StrInterp _ tm) = show tm
 
   showUpdate : PFieldUpdate -> String
   showUpdate (PSetField p v) = showSep "." p ++ " = " ++ show v
@@ -525,7 +542,7 @@ mutual
       where
         showAlt : PClause -> String
         showAlt (MkPatClause _ lhs rhs _) = " | " ++ show lhs ++ " => " ++ show rhs ++ ";"
-        showAlt (MkWithClause _ lhs rhs flags _) = " | <<with alts not possible>>"
+        showAlt (MkWithClause _ lhs rhs prf flags _) = " | <<with alts not possible>>"
         showAlt (MkImpossible _ lhs) = " | " ++ show lhs ++ " impossible;"
     showPrec _ (PCase _ tm cs)
         = "case " ++ show tm ++ " of { " ++
@@ -533,7 +550,7 @@ mutual
       where
         showCase : PClause -> String
         showCase (MkPatClause _ lhs rhs _) = show lhs ++ " => " ++ show rhs
-        showCase (MkWithClause _ lhs rhs flags _) = " | <<with alts not possible>>"
+        showCase (MkWithClause _ lhs rhs _ flags _) = " | <<with alts not possible>>"
         showCase (MkImpossible _ lhs) = show lhs ++ " impossible"
     showPrec d (PLocal _ ds sc) -- We'll never see this when displaying a normal form...
         = "let { << definitions >>  } in " ++ showPrec d sc
@@ -576,6 +593,8 @@ mutual
     showPrec d (PSectionR _ x op) = "(" ++ showPrec d x ++ " " ++ showPrec d op ++ ")"
     showPrec d (PEq fc l r) = showPrec d l ++ " = " ++ showPrec d r
     showPrec d (PBracketed _ tm) = "(" ++ showPrec d tm ++ ")"
+    showPrec d (PString _ xs) = join " ++ " $ show <$> xs
+    showPrec d (PMultiline _ indent xs) = "multiline (" ++ (join " ++ " $ show <$> concat xs) ++ ")"
     showPrec d (PDoBlock _ ns ds)
         = "do " ++ showSep " ; " (map showDo ds)
     showPrec d (PBang _ tm) = "!" ++ showPrec d tm
@@ -900,6 +919,12 @@ mapPTermM f = goPTerm where
     goPTerm (PBracketed fc x) =
       PBracketed fc <$> goPTerm x
       >>= f
+    goPTerm (PString fc xs) =
+      PString fc <$> goPStrings xs
+      >>= f
+    goPTerm (PMultiline fc x ys) =
+      PMultiline fc x <$> goPStringLines ys
+      >>= f
     goPTerm (PDoBlock fc ns xs) =
       PDoBlock fc ns <$> goPDos xs
       >>= f
@@ -960,6 +985,10 @@ mapPTermM f = goPTerm where
     goPFieldUpdate (PSetField p t)    = PSetField p <$> goPTerm t
     goPFieldUpdate (PSetFieldApp p t) = PSetFieldApp p <$> goPTerm t
 
+    goPStr : PStr -> Core PStr
+    goPStr (StrInterp fc t) = StrInterp fc <$> goPTerm t
+    goPStr x                = pure x
+
     goPDo : PDo -> Core PDo
     goPDo (DoExp fc t) = DoExp fc <$> goPTerm t
     goPDo (DoBind fc nameFC n t) = DoBind fc nameFC n <$> goPTerm t
@@ -983,9 +1012,10 @@ mapPTermM f = goPTerm where
       MkPatClause fc <$> goPTerm lhs
                      <*> goPTerm rhs
                      <*> goPDecls wh
-    goPClause (MkWithClause fc lhs wVal flags cls) =
+    goPClause (MkWithClause fc lhs wVal prf flags cls) =
       MkWithClause fc <$> goPTerm lhs
                       <*> goPTerm wVal
+                      <*> pure prf
                       <*> pure flags
                       <*> goPClauses cls
     goPClause (MkImpossible fc lhs) = MkImpossible fc <$> goPTerm lhs
@@ -1083,6 +1113,14 @@ mapPTermM f = goPTerm where
       (\ p, d, ts => (a, b, p, d) :: ts) <$> goPiInfo p
                                          <*> goPTerm t
                                          <*> go4TupledPTerms ts
+
+    goPStringLines : List (List PStr) -> Core (List (List PStr))
+    goPStringLines []        = pure []
+    goPStringLines (line :: lines) = (::) <$> goPStrings line <*> goPStringLines lines
+
+    goPStrings : List PStr -> Core (List PStr)
+    goPStrings []        = pure []
+    goPStrings (str :: strs) = (::) <$> goPStr str <*> goPStrings strs
 
     goPDos : List PDo -> Core (List PDo)
     goPDos []        = pure []

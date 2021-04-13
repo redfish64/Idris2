@@ -30,19 +30,12 @@ import System.Info
 
 %default covering
 
-pathLookup : IO String
-pathLookup
-    = do path <- idrisGetEnv "PATH"
-         let pathList = forget $ split (== pathSeparator) $ fromMaybe "/usr/bin:/usr/local/bin" path
-         let candidates = [p ++ "/" ++ x | p <- pathList,
-                                           x <- ["chez", "chezscheme9.5", "scheme", "scheme.exe"]]
-         e <- firstExists candidates
-         pure $ fromMaybe "/usr/bin/env scheme" e
-
 findChez : IO String
 findChez
-    = do Just chez <- idrisGetEnv "CHEZ" | Nothing => pathLookup
-         pure chez
+    = do Nothing <- idrisGetEnv "CHEZ"
+            | Just chez => pure chez
+         path <- pathLookup ["chez", "chezscheme9.5", "scheme"]
+         pure $ fromMaybe "/usr/bin/env scheme" path
 
 -- Given the chez compiler directives, return a list of pairs of:
 --   - the library file name
@@ -310,7 +303,7 @@ mkStruct (CFStruct n flds)
     showFld : (String, CFType) -> Core String
     showFld (n, ty) = pure $ "[" ++ n ++ " " ++ !(cftySpec emptyFC ty) ++ "]"
 mkStruct (CFIORes t) = mkStruct t
-mkStruct (CFFun a b) = do mkStruct a; mkStruct b
+mkStruct (CFFun a b) = do ignore (mkStruct a); mkStruct b
 mkStruct _ = pure ""
 
 schFgnDef : {auto c : Ref Ctxt Defs} ->
@@ -342,18 +335,26 @@ startChez : String -> String -> String
 startChez appdir target = unlines
     [ "#!/bin/sh"
     , ""
-    , "case `uname -s` in            "
-    , "    OpenBSD|FreeBSD|NetBSD)   "
-    , "        DIR=\"`grealpath $0`\""
-    , "        ;;                    "
-    , "                              "
-    , "    *)                        "
-    , "        DIR=\"`realpath $0`\" "
-    , "        ;;                    "
-    , "esac                          "
+    , "set -e # exit on any error"
     , ""
-    , "export LD_LIBRARY_PATH=\"`dirname \"$DIR\"`/\"" ++ appdir ++ "\":$LD_LIBRARY_PATH\""
-    , "\"`dirname \"$DIR\"`\"/\"" ++ target ++ "\" \"$@\""
+    , "case $(uname -s) in            "
+    , "    OpenBSD | FreeBSD | NetBSD)"
+    , "        REALPATH=\"grealpath\" "
+    , "        ;;                     "
+    , "                               "
+    , "    *)                         "
+    , "        REALPATH=\"realpath\"  "
+    , "        ;;                     "
+    , "esac                           "
+    , ""
+    , "if ! command -v \"$REALPATH\" >/dev/null; then             "
+    , "    echo \"$REALPATH is required for Chez code generator.\""
+    , "    exit 1                                                 "
+    , "fi                                                         "
+    , ""
+    , "DIR=$(dirname \"$($REALPATH \"$0\")\")"
+    , "export LD_LIBRARY_PATH=\"$DIR/" ++ appdir ++ "\":$LD_LIBRARY_PATH"
+    , "\"$DIR/" ++ target ++ "\" \"$@\""
     ]
 
 startChezCmd : String -> String -> String -> String
@@ -367,10 +368,13 @@ startChezCmd chez appdir target = unlines
 startChezWinSh : String -> String -> String -> String
 startChezWinSh chez appdir target = unlines
     [ "#!/bin/sh"
-    , "DIR=\"`realpath \"$0\"`\""
+    , ""
+    , "set -e # exit on any error"
+    , ""
+    , "DIR=$(dirname \"$(realpath \"$0\")\")"
     , "CHEZ=$(cygpath \"" ++ chez ++"\")"
-    , "export PATH=\"`dirname \"$DIR\"`/\"" ++ appdir ++ "\":$PATH\""
-    , "\"$CHEZ\" --script \"$(dirname \"$DIR\")/" ++ target ++ "\" \"$@\""
+    , "export PATH=\"$DIR/" ++ appdir ++ "\":$PATH"
+    , "\"$CHEZ\" --script \"$DIR/" ++ target ++ "\" \"$@\""
     ]
 
 ||| Compile a TT expression to Chez Scheme
@@ -380,7 +384,7 @@ compileToSS c appdir tm outfile
     = do ds <- getDirectives Chez
          libs <- findLibs ds
          traverse_ copyLib libs
-         cdata <- getCompileData Cases tm
+         cdata <- getCompileData False Cases tm
          let ndefs = namedDefs cdata
          let ctm = forget (mainExpr cdata)
 
@@ -401,7 +405,7 @@ compileToSS c appdir tm outfile
                    main ++ schFooter
          Right () <- coreLift $ writeFile outfile scm
             | Left err => throw (FileErr outfile err)
-         coreLift $ chmodRaw outfile 0o755
+         coreLift_ $ chmodRaw outfile 0o755
          pure ()
 
 ||| Compile a Chez Scheme source file to an executable, daringly with runtime checks off.
@@ -413,8 +417,8 @@ compileToSO chez appDirRel outSsAbs
                     show outSsAbs ++ "))"
          Right () <- coreLift $ writeFile tmpFileAbs build
             | Left err => throw (FileErr tmpFileAbs err)
-         coreLift $ chmodRaw tmpFileAbs 0o755
-         coreLift $ system (chez ++ " --script \"" ++ tmpFileAbs ++ "\"")
+         coreLift_ $ chmodRaw tmpFileAbs 0o755
+         coreLift_ $ system (chez ++ " --script \"" ++ tmpFileAbs ++ "\"")
          pure ()
 
 makeSh : String -> String -> String -> Core ()
@@ -439,7 +443,7 @@ compileExpr : Bool -> Ref Ctxt Defs -> (tmpDir : String) -> (outputDir : String)
 compileExpr makeitso c tmpDir outputDir tm outfile
     = do let appDirRel = outfile ++ "_app" -- relative to build dir
          let appDirGen = outputDir </> appDirRel -- relative to here
-         coreLift $ mkdirAll appDirGen
+         coreLift_ $ mkdirAll appDirGen
          Just cwd <- coreLift currentDir
               | Nothing => throw (InternalError "Can't get current directory")
          let outSsFile = appDirRel </> outfile <.> "ss"
@@ -453,7 +457,7 @@ compileExpr makeitso c tmpDir outputDir tm outfile
          if isWindows
             then makeShWindows chez outShRel appDirRel (if makeitso then outSoFile else outSsFile)
             else makeSh outShRel appDirRel (if makeitso then outSoFile else outSsFile)
-         coreLift $ chmodRaw outShRel 0o755
+         coreLift_ $ chmodRaw outShRel 0o755
          pure (Just outShRel)
 
 ||| Chez Scheme implementation of the `executeExpr` interface.
@@ -462,7 +466,7 @@ executeExpr : Ref Ctxt Defs -> (tmpDir : String) -> ClosedTerm -> Core ()
 executeExpr c tmpDir tm
     = do Just sh <- compileExpr False c tmpDir tmpDir tm "_tmpchez"
             | Nothing => throw (InternalError "compileExpr returned Nothing")
-         coreLift $ system sh
+         coreLift_ $ system sh
          pure ()
 
 ||| Codegen wrapper for Chez scheme implementation.

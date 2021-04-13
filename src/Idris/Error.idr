@@ -15,7 +15,7 @@ import Idris.Pretty
 import Parser.Source
 
 import Data.List
-import Data.List1
+import Libraries.Data.List1 as Lib
 import Libraries.Data.List.Extra
 import Data.Maybe
 import Data.Stream
@@ -25,6 +25,12 @@ import Libraries.Text.PrettyPrint.Prettyprinter
 import Libraries.Text.PrettyPrint.Prettyprinter.Util
 import System.File
 import Libraries.Utils.String
+import Libraries.Data.String.Extra
+
+%hide Data.Strings.lines
+%hide Data.Strings.lines'
+%hide Data.Strings.unlines
+%hide Data.Strings.unlines'
 
 %default covering
 
@@ -63,7 +69,7 @@ ploc fc@(MkFC fn s e) = do
     let (er, ec) = mapHom (fromInteger . cast) e
     let nsize = length $ show (er + 1)
     let head = annotate FileCtxt (pretty fc)
-    source <- lines <$> getCurrentElabSource
+    source <- (forget . lines) <$> getCurrentElabSource
     if sr == er
        then do
          let emph = spaces (cast $ nsize + sc + 4) <+> annotate Error (pretty (Extra.replicate (ec `minus` sc) '^'))
@@ -94,7 +100,7 @@ ploc2 (MkFC fn1 s1 e1) (MkFC fn2 s2 e2) =
           else do let nsize = length $ show (er2 + 1)
                   let head = annotate FileCtxt (pretty $ MkFC fn1 s1 e2)
                   let firstRow = annotate FileCtxt (spaces (cast $ nsize + 2) <+> pipe)
-                  source <- lines <$> getCurrentElabSource
+                  source <- (forget . lines) <$> getCurrentElabSource
                   case (sr1 == er1, sr2 == er2, sr1 == sr2) of
                        (True, True, True) => do
                          let line = fileCtxt pipe <++> maybe emptyDoc pretty (elemAt source sr1)
@@ -287,8 +293,8 @@ perror (AllFailed ts)
 
     allUndefined : List (Maybe Name, Error) -> Maybe Error
     allUndefined [] = Nothing
-    allUndefined [(_, UndefinedName loc e)] = Just (UndefinedName loc e)
-    allUndefined ((_, UndefinedName _ e) :: es) = allUndefined es
+    allUndefined [(_, err@(UndefinedName _ _))] = Just err
+    allUndefined ((_, err@(UndefinedName _ _)) :: es) = allUndefined es
     allUndefined _ = Nothing
 perror (RecordTypeNeeded fc _)
     = pure $ errorDesc (reflow "Can't infer type for this record update.") <+> line <+> !(ploc fc)
@@ -406,8 +412,14 @@ perror (TTCError msg)
         <++> parens (pretty "the most likely case is that the ./build directory in your current project contains files from a previous build of idris2 or the idris2 executable is from a different build than the installed .ttc files")
 perror (FileErr fname err)
     = pure $ errorDesc (reflow "File error in" <++> pretty fname <++> colon) <++> pretty (show err)
-perror (ParseFail _ err)
-    = pure $ pretty err
+perror (CantFindPackage fname)
+    = pure $ errorDesc (reflow "Can't find package " <++> pretty fname)
+perror (LitFail fc)
+    = pure $ errorDesc (reflow "Can't parse literate.") <+> line <+> !(ploc fc)
+perror (LexFail fc msg)
+    = pure $ errorDesc (pretty msg) <+> line <+> !(ploc fc)
+perror (ParseFail fc msg)
+    = pure $ errorDesc (pretty msg) <+> line <+> !(ploc fc)
 perror (ModuleNotFound fc ns)
     = pure $ errorDesc ("Module" <++> annotate FileCtxt (pretty ns) <++> reflow "not found") <+> line <+> !(ploc fc)
 perror (CyclicImports ns)
@@ -418,10 +430,11 @@ perror (UserError str) = pure $ errorDesc (pretty "Error" <+> colon) <++> pretty
 perror (NoForeignCC fc) = do
     let cgs = fst <$> availableCGs (options !(get Ctxt))
     let res = vsep [ errorDesc (reflow "The given specifier was not accepted by any backend. Available backends" <+> colon)
-                   , indent 2 (concatWith (\x,y => x <+> ", " <+> y) (map reflow cgs))
+                   , indent 2 (concatWith (\ x, y => x <+> ", " <+> y) (map reflow cgs))
                    , reflow "Some backends have additional specifier rules, refer to their documentation."
                    ] <+> line <+> !(ploc fc)
     pure res
+perror (BadMultiline fc str) = pure $ errorDesc (reflow "While processing multi-line string" <+> dot <++> pretty str <+> dot) <+> line <+> !(ploc fc)
 
 perror (InType fc n err)
     = pure $ hsep [ errorDesc (reflow "While processing type of" <++> code (pretty !(prettyName n))) <+> dot
@@ -440,6 +453,14 @@ perror (InRHS fc n err)
                   , !(perror err)
                   ]
 
+perror (MaybeMisspelling err ns) = pure $ !(perror err) <+> case ns of
+  (n ::: []) => reflow "Did you mean:" <++> pretty n <+> "?"
+  _ => let (xs, x) = Lib.unsnoc ns in
+       reflow "Did you mean any of:"
+       <++> concatWith (surround (comma <+> space)) (map pretty xs)
+       <+> comma <++> reflow "or" <++> pretty x <+> "?"
+
+
 export
 pwarning : {auto c : Ref Ctxt Defs} ->
            {auto s : Ref Syn SyntaxInfo} ->
@@ -449,6 +470,8 @@ pwarning (UnreachableClause fc env tm)
     = pure $ errorDesc (reflow "Unreachable clause:"
         <++> code !(pshow env tm))
         <+> line <+> !(ploc fc)
+pwarning (Deprecated s)
+    = pure $ pretty "Deprecation warning:" <++> pretty s
 
 prettyMaybeLoc : Maybe FC -> Doc IdrisAnn
 prettyMaybeLoc Nothing = emptyDoc

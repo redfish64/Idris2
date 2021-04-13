@@ -10,9 +10,17 @@ support fn = "C:" ++ fn ++ ", libidris2_support"
 libc : String -> String
 libc fn = "C:" ++ fn ++ ", libc 6"
 
-%foreign support "idris2_sleep"
+-- `sleep` and `usleep` need to be tied to `blodwen-[u]sleep` for threading
+-- reasons (see support/racket/support.rkt)
+
+%foreign "scheme,racket:blodwen-sleep"
+         support "idris2_sleep"
+--         "C:idris2_sleep, libidris2_support"
 prim__sleep : Int -> PrimIO ()
-%foreign support "idris2_usleep"
+
+%foreign "scheme,racket:blodwen-usleep"
+         support "idris2_usleep"
+--         "C:idris2_usleep, libidris2_support"
 prim__usleep : Int -> PrimIO ()
 
 export
@@ -23,15 +31,23 @@ export
 usleep : HasIO io => (x : Int) -> So (x >= 0) => io ()
 usleep sec = primIO (prim__usleep sec)
 
--- This one is going to vary for different back ends. Probably needs a
--- better convention. Will revisit...
-%foreign "scheme:blodwen-args"
-         "node:lambda:() => __prim_js2idris_array(process.argv.slice(1))"
-prim__getArgs : PrimIO (List String)
+-- Get the number of arguments
+%foreign "scheme:blodwen-arg-count"
+         "node:lambda:() => process.argv.length"
+prim__getArgCount : PrimIO Int
+
+-- Get argument number `n`
+%foreign "scheme:blodwen-arg"
+         "node:lambda:n => process.argv[n]"
+prim__getArg : Int -> PrimIO String
 
 export
 getArgs : HasIO io => io (List String)
-getArgs = primIO prim__getArgs
+getArgs = do
+            n <- primIO prim__getArgCount
+            if n > 0
+              then for [0..n-1] (\x => primIO $ prim__getArg x)
+              else pure []
 
 %foreign libc "getenv"
          "node:lambda: n => process.env[n]"

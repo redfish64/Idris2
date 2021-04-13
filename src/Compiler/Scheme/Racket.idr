@@ -52,6 +52,7 @@ schHeader libs
     "(require rnrs/io/ports-6)\n" ++ -- for files
     "(require srfi/19)\n" ++ -- for file handling and data
     "(require ffi/unsafe ffi/unsafe/define)\n" ++ -- for calling C
+    "(require racket/flonum)" ++ -- for float-typed transcendental functions
     libs ++
     "(let ()\n"
 
@@ -293,7 +294,7 @@ mkStruct (CFStruct n flds)
     showFld : (String, CFType) -> Core String
     showFld (n, ty) = pure $ "[" ++ n ++ " " ++ !(cftySpec emptyFC ty) ++ "]"
 mkStruct (CFIORes t) = mkStruct t
-mkStruct (CFFun a b) = do mkStruct a; mkStruct b
+mkStruct (CFFun a b) = do ignore (mkStruct a); mkStruct b
 mkStruct _ = pure ""
 
 schFgnDef : {auto f : Ref Done (List String) } ->
@@ -326,18 +327,26 @@ startRacket : String -> String -> String -> String
 startRacket racket appdir target = unlines
     [ "#!/bin/sh"
     , ""
-    , "case `uname -s` in            "
-    , "    OpenBSD|FreeBSD|NetBSD)   "
-    , "        DIR=\"`grealpath $0`\""
-    , "        ;;                    "
-    , "                              "
-    , "    *)                        "
-    , "        DIR=\"`realpath $0`\" "
-    , "        ;;                    "
-    , "esac                          "
+    , "set -e # exit on any error"
     , ""
-    , "export LD_LIBRARY_PATH=\"$LD_LIBRARY_PATH:`dirname \"$DIR\"`/\"" ++ appdir ++ "\"\""
-    , racket ++ "\"`dirname \"$DIR\"`\"/\"" ++ target ++ "\" \"$@\""
+    , "case $(uname -s) in            "
+    , "    OpenBSD | FreeBSD | NetBSD)"
+    , "        REALPATH=\"grealpath\" "
+    , "        ;;                     "
+    , "                               "
+    , "    *)                         "
+    , "        REALPATH=\"realpath\"  "
+    , "        ;;                     "
+    , "esac                           "
+    , ""
+    , "if ! command -v \"$REALPATH\" >/dev/null; then               "
+    , "    echo \"$REALPATH is required for Racket code generator.\""
+    , "    exit 1                                                   "
+    , "fi                                                           "
+    , ""
+    , "DIR=$(dirname \"$($REALPATH \"$0\")\")"
+    , "export LD_LIBRARY_PATH=\"$DIR/" ++ appdir ++ "\":$LD_LIBRARY_PATH"
+    , racket ++ "\"$DIR/" ++ target ++ "\" \"$@\""
     ]
 
 startRacketCmd : String -> String -> String -> String
@@ -352,24 +361,17 @@ startRacketWinSh : String -> String -> String -> String
 startRacketWinSh racket appdir target = unlines
     [ "#!/bin/sh"
     , ""
-    , "case `uname -s` in            "
-    , "    OpenBSD|FreeBSD|NetBSD)   "
-    , "        DIR=\"`grealpath $0`\""
-    , "        ;;                    "
-    , "                              "
-    , "    *)                        "
-    , "        DIR=\"`realpath $0`\" "
-    , "        ;;                    "
-    , "esac                          "
+    , "set -e # exit on any error"
     , ""
-    , "export PATH=\"`dirname \"$DIR\"`/\"" ++ appdir ++ "\":$PATH\""
+    , "DIR=$(dirname \"$(realpath \"$0\")\")"
+    , "export PATH=\"$DIR/" ++ appdir ++ "\":$PATH"
     , racket ++ "\"" ++ target ++ "\" \"$@\""
     ]
 
 compileToRKT : Ref Ctxt Defs ->
                String -> ClosedTerm -> (outfile : String) -> Core ()
 compileToRKT c appdir tm outfile
-    = do cdata <- getCompileData Cases tm
+    = do cdata <- getCompileData False Cases tm
          let ndefs = namedDefs cdata
          let ctm = forget (mainExpr cdata)
 
@@ -390,7 +392,7 @@ compileToRKT c appdir tm outfile
                    schFooter
          Right () <- coreLift $ writeFile outfile scm
             | Left err => throw (FileErr outfile err)
-         coreLift $ chmodRaw outfile 0o755
+         coreLift_ $ chmodRaw outfile 0o755
          pure ()
 
 makeSh : String -> String -> String -> String -> Core ()
@@ -414,7 +416,7 @@ compileExpr : Bool -> Ref Ctxt Defs -> (tmpDir : String) -> (outputDir : String)
 compileExpr mkexec c tmpDir outputDir tm outfile
     = do let appDirRel = outfile ++ "_app" -- relative to build dir
          let appDirGen = outputDir </> appDirRel -- relative to here
-         coreLift $ mkdirAll appDirGen
+         coreLift_ $ mkdirAll appDirGen
          Just cwd <- coreLift currentDir
               | Nothing => throw (InternalError "Can't get current directory")
 
@@ -443,7 +445,7 @@ compileExpr mkexec c tmpDir outputDir tm outfile
                        else if mkexec
                                then makeSh "" outShRel appDirRel outBinFile
                                else makeSh (racket ++ " ") outShRel appDirRel outRktFile
-                    coreLift $ chmodRaw outShRel 0o755
+                    coreLift_ $ chmodRaw outShRel 0o755
                     pure (Just outShRel)
             else pure Nothing
 
@@ -451,8 +453,7 @@ executeExpr : Ref Ctxt Defs -> (tmpDir : String) -> ClosedTerm -> Core ()
 executeExpr c tmpDir tm
     = do Just sh <- compileExpr False c tmpDir tmpDir tm "_tmpracket"
             | Nothing => throw (InternalError "compileExpr returned Nothing")
-         coreLift $ system sh
-         pure ()
+         coreLift_ $ system sh
 
 export
 codegenRacket : Codegen

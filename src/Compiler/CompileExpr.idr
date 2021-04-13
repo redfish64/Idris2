@@ -283,10 +283,10 @@ mutual
   toCExpTm n (As _ _ _ p) = toCExpTm n p
   -- TODO: Either make sure 'Delayed' is always Rig0, or add to typecase
   toCExpTm n (TDelayed fc _ _) = pure $ CErased fc
-  toCExpTm n (TDelay fc _ _ arg)
-      = pure (CDelay fc !(toCExp n arg))
-  toCExpTm n (TForce fc _ arg)
-      = pure (CForce fc !(toCExp n arg))
+  toCExpTm n (TDelay fc lr _ arg)
+      = pure (CDelay fc lr !(toCExp n arg))
+  toCExpTm n (TForce fc lr arg)
+      = pure (CForce fc lr !(toCExp n arg))
   toCExpTm n (PrimVal fc c)
       = let t = constTag c in
             if t == 0
@@ -429,7 +429,7 @@ mutual
   toCExpTree n alts@(Case _ x scTy (DelayCase ty arg sc :: rest))
       = let fc = getLoc scTy in
             pure $
-              CLet fc arg True (CForce fc (CLocal (getLoc scTy) x)) $
+              CLet fc arg True (CForce fc LInf (CLocal (getLoc scTy) x)) $
               CLet fc ty True (CErased fc)
                    !(toCExpTree n sc)
   toCExpTree n alts
@@ -629,8 +629,14 @@ toCDef n ty (Builtin {arity} op)
     getVars NoArgs = []
     getVars (ConsArg a rest) = MkVar First :: map weakenVar (getVars rest)
 toCDef n _ (DCon tag arity pos)
-    = let nt = maybe Nothing (Just . snd) pos in
-          pure $ MkCon (Just tag) arity nt
+    = do let nt = snd <$> pos
+         defs <- get Ctxt
+         args <- numArgs {vars = []} defs (Ref EmptyFC (DataCon tag arity) n)
+         let arity' = case args of
+                 NewTypeBy ar _ => ar
+                 EraseArgs ar erased => ar `minus` length erased
+                 Arity ar => ar
+         pure $ MkCon (Just tag) arity' nt
 toCDef n _ (TCon tag arity _ _ _ _ _ _)
     = pure $ MkCon Nothing arity Nothing
 -- We do want to be able to compile these, but also report an error at run time

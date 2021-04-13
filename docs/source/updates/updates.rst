@@ -229,7 +229,7 @@ different things absolutely necessary, but the result is that it contains:
 - ``Semigroup``, ``Monoid``
 - ``Functor``, ``Applicative``, ``Monad`` and related functions
 - ``Foldable``, ``Alternative`` and ``Traversable``
-- ``Enum``, for list range syntax
+- ``Range``, for list range syntax
 - Console ``IO``
 
 Anything which doesn't fit in here has been moved to the ``base`` libraries.
@@ -451,6 +451,8 @@ all their inputs unless stated otherwise with a ``partial`` annotation, or
 switching to ``%default partial`` (which is not recommended - use a ``partial``
 annotation instead to have the smallest possible place where functions are
 partial).
+
+.. _build-artefacts:
 
 Build artefacts
 ---------------
@@ -856,8 +858,9 @@ Chez Scheme target
 
 The default code generator is, for the moment, `Chez Scheme
 <https://www.scheme.com/>`_. Racket and Gambit code generators are also
-available. There is not yet a way to plug in code generators as in Idris 1,
-but this is coming.
+available.  Like Idris 1, Idris 2 `supports plug-in code generation
+<https://idris2.readthedocs.io/en/latest/backends/custom.html>`_
+to allow you to write a back end for the platform of your choice.
 To change the code generator, you can use the ``:set cg`` command:
 
 ::

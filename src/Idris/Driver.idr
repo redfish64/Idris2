@@ -19,6 +19,7 @@ import Idris.SetOptions
 import Idris.Syntax
 import Idris.Version
 import Idris.Pretty
+import Idris.Error
 
 import IdrisPaths
 
@@ -62,6 +63,10 @@ updateEnv
          the (Core ()) $ case blibs of
               Just path => do traverseList1_ addLibDir (map trim (split (==pathSeparator) path))
               Nothing => pure ()
+         pdirs <- coreLift $ idrisGetEnv "IDRIS2_PACKAGE_PATH"
+         the (Core ()) $ case pdirs of
+              Just path => do traverseList1_ addPackageDir (map trim (split (==pathSeparator) path))
+              Nothing => pure ()
          cg <- coreLift $ idrisGetEnv "IDRIS2_CG"
          the (Core ()) $ case cg of
               Just e => case getCG (options defs) e of
@@ -74,8 +79,9 @@ updateEnv
          -- for the tests means they test the local version not the installed
          -- version
          defs <- get Ctxt
-         addPkgDir "prelude"
-         addPkgDir "base"
+         -- These might fail while bootstrapping
+         catch (addPkgDir "prelude" anyBounds) (const (pure ()))
+         catch (addPkgDir "base" anyBounds) (const (pure ()))
          addDataDir (prefix_dir (dirs (options defs)) </>
                         ("idris2-" ++ showVersion False version) </> "support")
          addLibDir (prefix_dir (dirs (options defs)) </>
@@ -109,6 +115,11 @@ tryYaffle [] = pure False
 tryYaffle (Yaffle f :: _) = do yaffleMain f []
                                pure True
 tryYaffle (c :: cs) = tryYaffle cs
+
+ignoreMissingIpkg : List CLOpt -> Bool
+ignoreMissingIpkg [] = False
+ignoreMissingIpkg (IgnoreMissingIPKG :: _) = True
+ignoreMissingIpkg (c :: cs) = ignoreMissingIpkg cs
 
 tryTTM : List CLOpt -> Core Bool
 tryTTM [] = pure False
@@ -145,6 +156,9 @@ stMain cgs opts
          addPrimitives
 
          setWorkingDir "."
+         when (ignoreMissingIpkg opts) $
+            setSession (record { ignoreMissingPkg = True } !getSession)
+
          updateEnv
          let ide = ideMode opts
          let ideSocket = ideModeSocket opts
@@ -157,7 +171,7 @@ stMain cgs opts
            -- If there's a --build or --install, just do that then quit
            done <- processPackageOpts opts
 
-           when (not done) $
+           when (not done) $ flip catch renderError $
               do True <- preOptions opts
                      | False => pure ()
 
@@ -214,6 +228,17 @@ stMain cgs opts
                          Nothing => pure ()
                          Just _ => coreLift $ exitWith (ExitFailure 1)
 
+  where
+
+  renderError : {auto c : Ref Ctxt Defs} ->
+                {auto s : Ref Syn SyntaxInfo} ->
+                {auto o : Ref ROpts REPLOpts} ->
+                Error -> Core ()
+  renderError err = do
+    doc <- perror err
+    msg <- render doc
+    throw (UserError msg)
+
 -- Run any options (such as --version or --help) which imply printing a
 -- message then exiting. Returns wheter the program should continue
 
@@ -232,14 +257,14 @@ quitOpts (_ :: opts) = quitOpts opts
 
 export
 mainWithCodegens : List (String, Codegen) -> IO ()
-mainWithCodegens cgs = do Right opts <- getCmdOpts
-                            | Left err => do putStrLn err
-                                             putStrLn usage
-                          continue <- quitOpts opts
-                          if continue
-                              then do setupTerm
-                                      coreRun (stMain cgs opts)
-                                        (\err : Error => do putStrLn ("Uncaught error: " ++ show err)
-                                                            exitWith (ExitFailure 1))
-                                        (\res => pure ())
-                              else pure ()
+mainWithCodegens cgs = do
+  Right opts <- getCmdOpts
+    | Left err => do putStrLn err
+                     putStrLn usage
+  continue <- quitOpts opts
+  when continue $ do
+    setupTerm
+    coreRun (stMain cgs opts)
+      (\err : Error => do putStrLn ("Uncaught error: " ++ show err)
+                          exitWith (ExitFailure 1))
+      (\res => pure ())

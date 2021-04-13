@@ -86,7 +86,7 @@ schOp (Div IntegerType) [x, y] = op "quotient" [x, y]
 schOp (Div ty) [x, y] = op "/" [x, y]
 schOp (Mod ty) [x, y] = op "remainder" [x, y]
 schOp (Neg ty) [x] = op "-" [x]
-schOp (ShiftL IntType) [x, y] = op "blodwen-bits-shl" [x, y, "63"]
+schOp (ShiftL IntType) [x, y] = op "blodwen-bits-shl-signed" [x, y, "63"]
 schOp (ShiftL Bits8Type) [x, y] = op "blodwen-bits-shl" [x, y, "8"]
 schOp (ShiftL Bits16Type) [x, y] = op "blodwen-bits-shl" [x, y, "16"]
 schOp (ShiftL Bits32Type) [x, y] = op "blodwen-bits-shl" [x, y, "32"]
@@ -121,17 +121,17 @@ schOp StrReverse [x] = op "string-reverse" [x]
 schOp StrSubstr [x, y, z] = op "string-substr" [x, y, z]
 
 -- `e` is Euler's number, which approximates to: 2.718281828459045
-schOp DoubleExp [x] = op "exp" [x] -- Base is `e`. Same as: `pow(e, x)`
-schOp DoubleLog [x] = op "log" [x] -- Base is `e`.
-schOp DoubleSin [x] = op "sin" [x]
-schOp DoubleCos [x] = op "cos" [x]
-schOp DoubleTan [x] = op "tan" [x]
-schOp DoubleASin [x] = op "asin" [x]
-schOp DoubleACos [x] = op "acos" [x]
-schOp DoubleATan [x] = op "atan" [x]
-schOp DoubleSqrt [x] = op "sqrt" [x]
-schOp DoubleFloor [x] = op "floor" [x]
-schOp DoubleCeiling [x] = op "ceiling" [x]
+schOp DoubleExp [x] = op "flexp" [x] -- Base is `e`. Same as: `pow(e, x)`
+schOp DoubleLog [x] = op "fllog" [x] -- Base is `e`.
+schOp DoubleSin [x] = op "flsin" [x]
+schOp DoubleCos [x] = op "flcos" [x]
+schOp DoubleTan [x] = op "fltan" [x]
+schOp DoubleASin [x] = op "flasin" [x]
+schOp DoubleACos [x] = op "flacos" [x]
+schOp DoubleATan [x] = op "flatan" [x]
+schOp DoubleSqrt [x] = op "flsqrt" [x]
+schOp DoubleFloor [x] = op "flfloor" [x]
+schOp DoubleCeiling [x] = op "flceiling" [x]
 
 schOp (Cast IntType StringType) [x] = op "number->string" [x]
 schOp (Cast IntegerType StringType) [x] = op "number->string" [x]
@@ -299,8 +299,8 @@ mutual
   used n (NmCon _ _ _ args) = anyTrue (map (used n) args)
   used n (NmOp _ _ args) = anyTrue (toList (map (used n) args))
   used n (NmExtPrim _ _ args) = anyTrue (map (used n) args)
-  used n (NmForce _ t) = used n t
-  used n (NmDelay _ t) = used n t
+  used n (NmForce _ _ t) = used n t
+  used n (NmDelay _ _ t) = used n t
   used n (NmConCase _ sc alts def)
       = used n sc || anyTrue (map (usedCon n) alts)
             || maybe False (used n) def
@@ -377,8 +377,8 @@ parameters (schExtPrim : Int -> ExtPrim -> List NamedCExp -> Core String,
         = pure $ schOp op !(schArgs i args)
     schExp i (NmExtPrim fc p args)
         = schExtPrim i (toPrim p) args
-    schExp i (NmForce fc t) = pure $ "(" ++ !(schExp i t) ++ ")"
-    schExp i (NmDelay fc t) = pure $ "(lambda () " ++ !(schExp i t) ++ ")"
+    schExp i (NmForce fc lr t) = pure $ "(" ++ !(schExp i t) ++ ")"
+    schExp i (NmDelay fc lr t) = pure $ "(lambda () " ++ !(schExp i t) ++ ")"
     schExp i (NmConCase fc sc [] def)
         = do tcode <- schExp (i+1) sc
              defc <- maybe (pure "'erased") (schExp i) def

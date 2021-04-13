@@ -357,7 +357,7 @@ elabInterface {vars} fc vis env nest constraints iname params dets mcon body
                                          pure (record { name = n } mt)) meth_decls
          defs <- get Ctxt
          Just ty <- lookupTyExact ns_iname (gamma defs)
-              | Nothing => throw (UndefinedName fc iname)
+              | Nothing => undefinedName fc iname
          let implParams = getImplParams ty
 
          updateIfaceSyn ns_iname conName
@@ -391,8 +391,7 @@ elabInterface {vars} fc vis env nest constraints iname params dets mcon body
                                   dets meths
              log "elab.interface" 10 $ "Methods: " ++ show meths
              log "elab.interface" 5 $ "Making interface data type " ++ show dt
-             processDecls nest env [dt]
-             pure ()
+             ignore $ processDecls nest env [dt]
 
     elabMethods : (conName : Name) -> List Name ->
                   List Signature ->
@@ -405,7 +404,7 @@ elabInterface {vars} fc vis env nest constraints iname params dets mcon body
                                                params) meth_sigs
              let fns = concat fnsm
              log "elab.interface" 5 $ "Top level methods: " ++ show fns
-             traverse (processDecl [] nest env) fns
+             traverse_ (processDecl [] nest env) fns
              traverse_ (\n => do mn <- inCurrentNS n
                                  setFlag fc mn Inline
                                  setFlag fc mn TCInline
@@ -424,7 +423,7 @@ elabInterface {vars} fc vis env nest constraints iname params dets mcon body
 
              (rig, dty) <-
                    the (Core (RigCount, RawImp)) $
-                       case firstBy (\ d => d <$ guard (n == d.name)) tydecls of
+                       case findBy (\ d => d <$ guard (n == d.name)) tydecls of
                           Just d => pure (d.count, d.type)
                           Nothing => throw (GenericMsg fc ("No method named " ++ show n ++ " in interface " ++ show iname))
 
@@ -484,9 +483,9 @@ elabInterface {vars} fc vis env nest constraints iname params dets mcon body
         changeName : Name -> ImpClause -> ImpClause
         changeName dn (PatClause fc lhs rhs)
             = PatClause fc (changeNameTerm dn lhs) rhs
-        changeName dn (WithClause fc lhs wval flags cs)
+        changeName dn (WithClause fc lhs wval prf flags cs)
             = WithClause fc (changeNameTerm dn lhs) wval
-                         flags (map (changeName dn) cs)
+                         prf flags (map (changeName dn) cs)
         changeName dn (ImpossibleClause fc lhs)
             = ImpossibleClause fc (changeNameTerm dn lhs)
 
@@ -499,6 +498,6 @@ elabInterface {vars} fc vis env nest constraints iname params dets mcon body
                                                  meth_names
                                                  paramNames) nconstraints
              log "elab.interface" 5 $ "Constraint hints from " ++ show constraints ++ ": " ++ show chints
-             traverse (processDecl [] nest env) (concatMap snd chints)
+             traverse_ (processDecl [] nest env) (concatMap snd chints)
              traverse_ (\n => do mn <- inCurrentNS n
                                  setFlag fc mn TCInline) (map fst chints)

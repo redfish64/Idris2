@@ -1,5 +1,6 @@
 module Data.Vect
 
+import Data.DPair
 import Data.List
 import Data.Nat
 import public Data.Fin
@@ -186,8 +187,8 @@ replicate (S k) x = x :: replicate k x
 ||| ```
 export
 mergeBy : (elem -> elem -> Ordering) -> (xs : Vect n elem) -> (ys : Vect m elem) -> Vect (n + m) elem
-mergeBy     _ [] ys = ys
-mergeBy {n} _ xs [] = rewrite plusZeroRightNeutral n in xs
+mergeBy _ [] ys = ys
+mergeBy _ xs [] = rewrite plusZeroRightNeutral n in xs
 mergeBy {n = S k} {m = S k'} order (x :: xs) (y :: ys)
      = case order x y of
             LT => x :: mergeBy order xs (y :: ys)
@@ -197,6 +198,20 @@ mergeBy {n = S k} {m = S k'} order (x :: xs) (y :: ys)
 export
 merge : Ord elem => Vect n elem -> Vect m elem -> Vect (n + m) elem
 merge = mergeBy compare
+
+-- Properties for functions in this section --
+
+export
+replaceAtSameIndex : (xs : Vect n a) -> (i : Fin n) -> (0 y : a) -> index i (replaceAt i y xs) = y
+replaceAtSameIndex (_::_) FZ     _ = Refl
+replaceAtSameIndex (_::_) (FS _) _ = replaceAtSameIndex _ _ _
+
+export
+replaceAtDiffIndexPreserves : (xs : Vect n a) -> (i, j : Fin n) -> Not (i = j) -> (0 y : a) -> index i (replaceAt j y xs) = index i xs
+replaceAtDiffIndexPreserves (_::_) FZ     FZ     co _ = absurd $ co Refl
+replaceAtDiffIndexPreserves (_::_) FZ     (FS _) _  _ = Refl
+replaceAtDiffIndexPreserves (_::_) (FS _) FZ     _  _ = Refl
+replaceAtDiffIndexPreserves (_::_) (FS z) (FS w) co y = replaceAtDiffIndexPreserves _ z w (co . cong FS) y
 
 --------------------------------------------------------------------------------
 -- Transformations
@@ -247,7 +262,7 @@ toVect _ _ = Nothing
 public export
 fromList' : (xs : Vect len elem) -> (l : List elem) -> Vect (length l + len) elem
 fromList' ys [] = ys
-fromList' {len} ys (x::xs) =
+fromList' ys (x::xs) =
   rewrite (plusSuccRightSucc (length xs) len) in
   fromList' (x::ys) xs
 
@@ -273,7 +288,7 @@ Eq a => Eq (Vect n a) where
   (==) []      []      = True
   (==) (x::xs) (y::ys) = x == y && xs == ys
 
-export
+public export
 DecEq a => DecEq (Vect n a) where
   decEq []      []      = Yes Refl
   decEq (x::xs) (y::ys) with (decEq x y, decEq xs ys)
@@ -741,16 +756,35 @@ diag : Vect len (Vect len elem) -> Vect len elem
 diag []             = []
 diag ((x::xs)::xss) = x :: diag (map tail xss)
 
-public export
-range : {len : Nat} -> Vect len (Fin len)
-range {len=Z}   = []
-range {len=S _} = FZ :: map FS range
+namespace Fin
+
+  public export
+  tabulate : {len : Nat} -> (Fin len -> a) -> Vect len a
+  tabulate {len = Z} f = []
+  tabulate {len = S _} f = f FZ :: tabulate (f . FS)
+
+  public export
+  range : {len : Nat} -> Vect len (Fin len)
+  range = tabulate id
+
+namespace Subset
+
+  public export
+  tabulate : {len : Nat} -> (Subset Nat (`LT` len) -> a) -> Vect len a
+  tabulate {len = Z} f = []
+  tabulate {len = S _} f
+    = f (Element Z ltZero)
+    :: Subset.tabulate (\ (Element n prf) => f (Element (S n) (LTESucc prf)))
+
+  public export
+  range : {len : Nat} -> Vect len (Subset Nat (`LT` len))
+  range = tabulate id
 
 --------------------------------------------------------------------------------
 -- Zippable
 --------------------------------------------------------------------------------
 
-export
+public export
 Zippable (Vect k) where
   zipWith _ [] [] = []
   zipWith f (x :: xs) (y :: ys) = f x y :: zipWith f xs ys
@@ -767,6 +801,16 @@ Zippable (Vect k) where
   unzipWith3 f (x :: xs) = let (b, c, d) = f x
                                (bs, cs, ds) = unzipWith3 f xs in
                                (b :: bs, c :: cs, d :: ds)
+
+export
+zipWithIndexLinear : (0 f : _) -> (xs, ys : Vect n a) -> (i : Fin n) -> index i (zipWith f xs ys) = f (index i xs) (index i ys)
+zipWithIndexLinear _ (_::xs) (_::ys) FZ     = Refl
+zipWithIndexLinear f (_::xs) (_::ys) (FS i) = zipWithIndexLinear f xs ys i
+
+export
+zipWith3IndexLinear : (0 f : _) -> (xs, ys, zs : Vect n a) -> (i : Fin n) -> index i (zipWith3 f xs ys zs) = f (index i xs) (index i ys) (index i zs)
+zipWith3IndexLinear _ (_::xs) (_::ys) (_::zs) FZ     = Refl
+zipWith3IndexLinear f (_::xs) (_::ys) (_::zs) (FS i) = zipWith3IndexLinear f xs ys zs i
 
 --------------------------------------------------------------------------------
 -- Matrix transposition
@@ -831,9 +875,8 @@ exactLength {m} len xs with (decEq m len)
 export
 overLength : {m : Nat} -> -- expected at run-time
              (len : Nat) -> (xs : Vect m a) -> Maybe (p ** Vect (plus p len) a)
-overLength {m} n xs with (cmp m n)
-  overLength {m = m} (plus m (S y)) xs | (CmpLT y) = Nothing
-  overLength {m = m} m xs | CmpEQ
-         = Just (0 ** xs)
+overLength n xs with (cmp m n)
+  overLength {m}   (plus m (S y)) xs | (CmpLT y) = Nothing
+  overLength {m}                m xs | CmpEQ     = Just (0 ** xs)
   overLength {m = plus n (S x)} n xs | (CmpGT x)
          = Just (S x ** rewrite plusCommutative (S x) n in xs)
